@@ -1,0 +1,313 @@
+---
+title: "Análisis Diferencial de Expresión Génica con DESeq2"
+author: "JoseHidalgo"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    code_folding: show
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = TRUE, fig.width = 10, fig.height = 8)
+project_dir <- "C:/Users/10935/Documents/Proyecto_Adenocarcinoma_RNAseq"
+knitr::opts_knit$set(root.dir = project_dir)
+```
+
+# 1. Cargar Librerías
+```{r load-libraries, message=FALSE, warning=FALSE}
+library(DESeq2)
+library(tidyverse)
+library(pheatmap)
+library(RColorBrewer)
+library(ggrepel)
+
+cat("✓ DESeq2 version:", as.character(packageVersion("DESeq2")), "\n")
+cat("✓ tidyverse version:", as.character(packageVersion("tidyverse")), "\n")
+```
+
+# 2. Cargar Datos
+```{r load-data}
+# Matriz de counts
+counts_file <- "05_quantification/counts/raw_counts_matrix.csv"
+counts_matrix <- read.csv(counts_file, row.names = 1)
+
+# Metadata
+metadata_file <- "00_raw_data/metadata/metadata_consolidado.csv"
+metadata <- read.csv(metadata_file, stringsAsFactors = TRUE)
+
+cat("Matriz de counts:", nrow(counts_matrix), "genes x", ncol(counts_matrix), "muestras\n")
+cat("Metadata:", nrow(metadata), "muestras\n")
+```
+
+# 3. Verificar Consistencia de Datos
+```{r verify-data}
+# Verificar que los nombres coincidan
+all(colnames(counts_matrix) == metadata$sample_id)
+
+# Verificar niveles del factor condition
+cat("Niveles de condition:", levels(metadata$condition), "\n")
+cat("Referencia:", levels(metadata$condition)[1], "\n")
+
+# Resumen de grupos
+table(metadata$condition)
+```
+
+# 4. Crear Objeto DESeq2
+
+**Para ejecutar:** Cambiar `eval=FALSE` a `eval=TRUE`.
+```{r create-deseq, eval=FALSE}
+cat("Creando objeto DESeq2...\n")
+cat("Inicio:", format(Sys.time(), "%H:%M:%S"), "\n\n")
+
+# Crear DESeqDataSet
+dds <- DESeqDataSetFromMatrix(
+  countData = counts_matrix,
+  colData = metadata,
+  design = ~ condition
+)
+
+# Pre-filtrado: eliminar genes con < 10 counts totales
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep, ]
+
+cat("Genes después de filtrado:", nrow(dds), "\n")
+
+# Ejecutar análisis DESeq2
+dds <- DESeq(dds)
+
+# Guardar objeto
+saveRDS(dds, "06_differential_expression/deseq2_object.rds")
+
+cat("\n✓ Análisis DESeq2 completado\n")
+cat("Fin:", format(Sys.time(), "%H:%M:%S"), "\n")
+```
+
+# 5. Cargar Resultados
+```{r load-results}
+# Cargar objeto DESeq2 guardado
+if (file.exists("06_differential_expression/deseq2_object.rds")) {
+  dds <- readRDS("06_differential_expression/deseq2_object.rds")
+  cat("✓ Objeto DESeq2 cargado\n")
+  cat("Genes analizados:", nrow(dds), "\n")
+} else {
+  cat("⚠️ Ejecuta la Sección 4 primero\n")
+}
+```
+
+# 6. Extraer Resultados
+```{r extract-results}
+if (exists("dds")) {
+  # Extraer resultados (Tumor vs Normal)
+  res <- results(dds, contrast = c("condition", "Tumor", "Normal"))
+  
+  # Ordenar por p-valor ajustado
+  res <- res[order(res$padj), ]
+  
+  # Resumen
+  summary(res)
+  
+  # Convertir a dataframe
+  res_df <- as.data.frame(res)
+  res_df$gene_id <- rownames(res_df)
+  
+  cat("\n✓ Resultados extraídos \n")
+}
+```
+
+# 7. Identificar DEGs
+```{r identify-degs}
+if (exists("res_df")) {
+  # Criterios: |log2FC| > 1, padj < 0.05
+  degs <- res_df %>%
+    filter(!is.na(padj)) %>%
+    filter(abs(log2FoldChange) > 1 & padj < 0.05)
+  
+  # Clasificar
+  degs_up <- degs %>% filter(log2FoldChange > 1)
+  degs_down <- degs %>% filter(log2FoldChange < -1)
+  
+
+  cat("  GENES DIFERENCIALMENTE EXPRESADOS\n")
+
+  cat("Total DEGs:", nrow(degs), "\n")
+  cat("  ↑ Upregulated:", nrow(degs_up), "\n")
+  cat("  ↓ Downregulated:", nrow(degs_down), "\n")
+  
+  # Guardar resultados
+  write.csv(degs, "06_differential_expression/DEGs_significant.csv", row.names = FALSE)
+  write.csv(res_df, "06_differential_expression/DESeq2_all_results.csv", row.names = FALSE)
+  
+  cat("\n✓ Resultados guardados\n")
+}
+```
+
+# 8. PCA Plot
+```{r pca-plot, fig.width=8, fig.height=6}
+if (exists("dds")) {
+  # Transformación variance stabilizing
+  vsd <- vst(dds, blind = FALSE)
+  
+  # PCA
+  pca_data <- plotPCA(vsd, intgroup = "condition", returnData = TRUE)
+  percentVar <- round(100 * attr(pca_data, "percentVar"))
+  
+  ggplot(pca_data, aes(x = PC1, y = PC2, color = condition)) +
+    geom_point(size = 4) +
+    geom_text_repel(aes(label = name), size = 3) +
+    xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+    ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+    scale_color_manual(values = c("Normal" = "#00BFC4", "Tumor" = "#F8766D")) +
+    theme_bw() +
+    theme(legend.position = "top") +
+    ggtitle("PCA: Tumor vs Normal")
+  
+  ggsave("08_figures_tables/PCA_plot.png", width = 8, height = 6, dpi = 300)
+}
+```
+
+# 9. Volcano Plot
+```{r volcano-plot, fig.width=10, fig.height=8}
+if (exists("res_df")) {
+  # Agregar columna de significancia
+  res_df <- res_df %>%
+    mutate(
+      sig = case_when(
+        abs(log2FoldChange) > 1 & padj < 0.05 ~ "Significant",
+        TRUE ~ "Not Significant"
+      )
+    )
+  
+  # Top 10 genes (5 up, 5 down)
+  top_genes <- res_df %>%
+    filter(sig == "Significant") %>%
+    arrange(padj) %>%
+    slice(1:5) %>%
+    bind_rows(
+      res_df %>%
+        filter(sig == "Significant", log2FoldChange < 0) %>%
+        arrange(padj) %>%
+        slice(1:5)
+    )
+  
+  ggplot(res_df, aes(x = log2FoldChange, y = -log10(padj), color = sig)) +
+    geom_point(alpha = 0.4, size = 1) +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "gray30") +
+    geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "gray30") +
+    geom_text_repel(
+      data = top_genes,
+      aes(label = gene_id),
+      size = 3,
+      max.overlaps = 20
+    ) +
+    scale_color_manual(values = c("Significant" = "red", "Not Significant" = "gray60")) +
+    labs(
+      title = "Volcano Plot: Tumor vs Normal",
+      x = "log2 Fold Change",
+      y = "-log10 adjusted p-value",
+      color = ""
+    ) +
+    theme_bw() +
+    theme(legend.position = "top")
+  
+  ggsave("08_figures_tables/Volcano_plot.png", width = 10, height = 8, dpi = 300)
+}
+```
+
+# 10. MA Plot
+```{r ma-plot, fig.width=10, fig.height=8}
+if (exists("dds")) {
+  png("08_figures_tables/MA_plot.png", width = 10, height = 8, units = "in", res = 300)
+  plotMA(res, ylim = c(-5, 5), main = "MA Plot: Tumor vs Normal")
+  dev.off()
+  
+  # Mostrar en RMarkdown
+  plotMA(res, ylim = c(-5, 5), main = "MA Plot: Tumor vs Normal")
+}
+```
+
+# 11. Heatmap (Top 50 DEGs)
+```{r heatmap, fig.width=10, fig.height=12}
+if (exists("dds") && exists("degs")) {
+  # Top 50 DEGs por p-valor ajustado
+  top50 <- degs %>%
+    arrange(padj) %>%
+    slice(1:50) %>%
+    pull(gene_id)
+  
+  # Matriz normalizada
+  vsd <- vst(dds, blind = FALSE)
+  mat <- assay(vsd)[top50, ]
+  
+  # Escalar por fila (z-score)
+  mat_scaled <- t(scale(t(mat)))
+  
+  # Anotación de columnas
+  annotation_col <- data.frame(
+    Condition = metadata$condition,
+    row.names = metadata$sample_id
+  )
+  
+  # Colores
+  ann_colors <- list(
+    Condition = c(Normal = "#00BFC4", Tumor = "#F8766D")
+  )
+  
+  # Heatmap
+  pheatmap(
+    mat_scaled,
+    annotation_col = annotation_col,
+    annotation_colors = ann_colors,
+    color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(100),
+    show_rownames = TRUE,
+    show_colnames = FALSE,
+    cluster_rows = TRUE,
+    cluster_cols = TRUE,
+    fontsize_row = 6,
+    main = "Top 50 DEGs: Tumor vs Normal",
+    filename = "08_figures_tables/Heatmap_top50.png",
+    width = 10,
+    height = 12
+  )
+  
+  # Mostrar en RMarkdown
+  pheatmap(
+    mat_scaled,
+    annotation_col = annotation_col,
+    annotation_colors = ann_colors,
+    color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(100),
+    show_rownames = TRUE,
+    show_colnames = FALSE,
+    cluster_rows = TRUE,
+    cluster_cols = TRUE,
+    fontsize_row = 6,
+    main = "Top 50 DEGs: Tumor vs Normal"
+  )
+}
+```
+
+# 12. Resumen
+```{r summary}
+cat("  RESUMEN DE ANÁLISIS DIFERENCIAL\n")
+
+if (exists("degs")) {
+  cat("Genes analizados:", nrow(dds), "\n")
+  cat("DEGs (|log2FC| > 1, padj < 0.05):", nrow(degs), "\n")
+  cat("  ↑ Upregulated:", nrow(degs_up), "\n")
+  cat("  ↓ Downregulated:", nrow(degs_down), "\n\n")
+  
+  cat("Archivos generados:\n")
+  cat("  - DEGs_significant.csv\n")
+  cat("  - DESeq2_all_results.csv\n")
+  cat("  - PCA_plot.png\n")
+  cat("  - Volcano_plot.png\n")
+  cat("  - MA_plot.png\n")
+  cat("  - Heatmap_top50.png\n")
+}
+
+cat("\n Próximo: Script 05_Analisis_Funcional\n")
+```
+```{r session-info}
+sessionInfo()
+```

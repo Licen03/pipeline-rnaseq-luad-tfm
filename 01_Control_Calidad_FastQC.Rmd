@@ -1,0 +1,122 @@
+---
+title: "Control de Calidad con FastQC y MultiQC"
+author: "JoseHidalgo"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    code_folding: show
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = TRUE)
+project_dir <- "C:/Users/10935/Documents/Proyecto_Adenocarcinoma_RNAseq"
+knitr::opts_knit$set(root.dir = project_dir)
+```
+
+# 1. Configuración
+```{r config}
+# Directorios
+fastqc_reports_dir <- "01_quality_control/fastqc_reports"
+multiqc_output_dir <- "01_quality_control/multiqc_report"
+
+cat("Directorio de reportes FastQC:", fastqc_reports_dir, "\n")
+cat("Directorio de salida MultiQC:", multiqc_output_dir, "\n")
+```
+
+# 2. Verificar Reportes FastQC
+
+**Nota:** FastQC se ejecutó manualmente desde PowerShell debido a problemas de compatibilidad con R en Windows.
+
+**Comando ejecutado:**
+```bash
+cd C:\Users\10935\Documents\FastQC
+.\run_fastqc.bat -t 4 C:\Users\10935\Documents\Proyecto_Adenocarcinoma_RNAseq\00_raw_data\fastq\*.fastq.gz
+```
+```{r verify-fastqc}
+# Verificar reportes HTML
+html_files <- list.files(fastqc_reports_dir, pattern = "_fastqc\\.html$")
+
+# Verificar reportes ZIP (necesarios para MultiQC)
+zip_files <- list.files(fastqc_reports_dir, pattern = "_fastqc\\.zip$")
+
+cat("Reportes HTML:", length(html_files), "\n")
+cat("Reportes ZIP:", length(zip_files), "\n")
+
+if (length(html_files) == 40 && length(zip_files) == 40) {
+  cat("✓ Todos los reportes presentes\n")
+} else {
+  cat("⚠️ Faltan reportes\n")
+}
+```
+
+# 3. Ejecutar MultiQC
+
+**Para ejecutar:** Cambiar `eval=FALSE` a `eval=TRUE`.`
+```{r run-multiqc, eval=FALSE}
+cat("Ejecutando MultiQC...\n")
+cat("Inicio:", format(Sys.time(), "%H:%M:%S"), "\n\n")
+
+# Crear directorio de salida
+dir.create(multiqc_output_dir, showWarnings = FALSE, recursive = TRUE)
+
+# Rutas absolutas
+reports_abs <- normalizePath(fastqc_reports_dir, winslash = "/")
+output_abs <- normalizePath(multiqc_output_dir, winslash = "/", mustWork = FALSE)
+
+# Construir comando MultiQC
+multiqc_cmd <- sprintf(
+  'multiqc "%s" -o "%s" -n QC_Report --force',
+  reports_abs,
+  output_abs
+)
+
+# Ejecutar
+system(multiqc_cmd)
+
+cat("\n✓ MultiQC completado\n")
+cat("Fin:", format(Sys.time(), "%H:%M:%S"), "\n")
+```
+
+# 4. Verificar Reporte MultiQC
+```{r verify-multiqc}
+multiqc_report <- file.path(multiqc_output_dir, "QC_Report.html")
+
+cat("Reporte MultiQC:", ifelse(file.exists(multiqc_report), "✓ OK", "⚠️ Pendiente"), "\n")
+
+if (file.exists(multiqc_report)) {
+  cat("\n Abre el reporte:\n")
+  cat(normalizePath(multiqc_report), "\n")
+}
+```
+
+# 5. Interpretación de Resultados
+```{r interpretation}
+cat("  CRITERIOS DE CALIDAD\n")
+
+cat("✓ CRITERIOS PARA BUENA CALIDAD:\n")
+cat("  - Phred Score > 28 en mayoría de posiciones\n")
+cat("  - Contenido GC estable (~40-60%)\n")
+cat("  - Sin sobrerrepresentación de secuencias\n")
+cat("  - Sin contaminación de adaptadores\n\n")
+
+cat("⚠️ REQUIERE TRIMMING SI:\n")
+cat("  - Calidad cae < 20 al final de lecturas\n")
+cat("  - Presencia de adaptadores\n")
+cat("  - Contenido GC irregular\n")
+```
+
+# 6. Resumen
+```{r summary}
+cat("Reportes FastQC (HTML):", length(html_files), "\n")
+cat("Reportes FastQC (ZIP):", length(zip_files), "\n")
+cat("Reporte MultiQC:", ifelse(file.exists(multiqc_report), "✓", "⚠️"), "\n")
+cat("Trimming: NO requerido\n")
+
+cat("Próximo: Script 02_Indice_Alineamiento_Rsubread\n")
+```
+
+```{r session-info}
+sessionInfo()
+```

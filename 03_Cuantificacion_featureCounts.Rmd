@@ -1,0 +1,131 @@
+---
+title: "Cuantificación con featureCounts"
+author: "JoseHidalgo"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    code_folding: show
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = TRUE)
+project_dir <- "C:/Users/10935/Documents/Proyecto_Adenocarcinoma_RNAseq"
+knitr::opts_knit$set(root.dir = project_dir)
+```
+
+# 1. Cargar Librerías
+```{r load-libraries, message=FALSE, warning=FALSE}
+library(Rsubread)
+library(tidyverse)
+
+cat("✓ Rsubread versión:", as.character(packageVersion("Rsubread")), "\n")
+```
+
+# 2. Verificar Archivos BAM
+```{r verify-bams}
+bam_dir <- "04_alignment/bam_files"
+bam_files <- list.files(bam_dir, pattern = "_fixed\\.bam$", full.names = TRUE)
+
+cat("Archivos BAM encontrados:", length(bam_files), "\n")
+
+if (length(bam_files) == 20) {
+  cat("✓ Todas las muestras presentes\n")
+} else {
+  cat("⚠️ Se esperaban 20 archivos BAM\n")
+}
+```
+
+# 3. Verificar Archivo GTF
+```{r verify-gtf}
+gtf_file <- "03_genome_reference/annotation/gencode.v47.primary_assembly.annotation.gtf"
+
+if (file.exists(gtf_file)) {
+  cat("✓ GTF encontrado\n")
+  cat("  Tamaño:", round(file.info(gtf_file)$size / (1024^3), 2), "GB\n")
+} else {
+  stop("✗ GTF no encontrado")
+}
+```
+
+# 4. Cuantificación con featureCounts
+
+**Tiempo estimado: 30-60 min**
+
+**Para ejecutar:** Cambiar `eval=FALSE` a `eval=TRUE`.
+```{r quantification, eval=FALSE}
+cat("Iniciando cuantificación...\n")
+cat("Inicio:", format(Sys.time(), "%H:%M:%S"), "\n\n")
+
+fc <- featureCounts(
+  files = bam_files,
+  annot.ext = gtf_file,
+  isGTFAnnotationFile = TRUE,
+  GTF.featureType = "exon",
+  GTF.attrType = "gene_id",
+  isPairedEnd = TRUE,
+  nthreads = 4
+)
+
+cat("\n✓ Cuantificación completada\n")
+cat("Fin:", format(Sys.time(), "%H:%M:%S"), "\n")
+
+# Guardar resultados
+save(fc, file = "05_quantification/counts/featureCounts_results.RData")
+cat("✓ Resultados guardados\n")
+```
+
+# 5. Explorar Resultados
+```{r explore-results}
+load("05_quantification/counts/featureCounts_results.RData")
+
+counts <- fc$counts
+
+cat("Genes:", nrow(counts), "\n")
+cat("Muestras:", ncol(counts), "\n")
+
+cat("Estadísticas de asignación:\n")
+print(fc$stat)
+```
+
+# 6. Limpiar y Guardar Matriz de Conteos
+```{r save-counts}
+# Limpiar nombres de columnas
+colnames(counts) <- gsub(".*/", "", colnames(counts))
+colnames(counts) <- gsub("_fixed\\.bam$", "", colnames(counts))
+
+cat("Muestras:\n")
+print(colnames(counts))
+
+# Guardar matriz
+counts_df <- as.data.frame(counts)
+counts_df$gene_id <- rownames(counts_df)
+counts_df <- counts_df[, c("gene_id", colnames(counts))]
+
+write.csv(counts_df, 
+          "05_quantification/counts/raw_counts_matrix.csv", 
+          row.names = FALSE)
+
+cat("\n✓ Matriz guardada: raw_counts_matrix.csv\n")
+```
+
+# 7. Resumen
+```{r summary}
+counts_file <- "05_quantification/counts/raw_counts_matrix.csv"
+
+if (file.exists(counts_file)) {
+  cat("═══════════════════════════════════\n")
+  cat("✓ Cuantificación completada\n")
+  cat("  Genes:", nrow(counts_df), "\n
+")
+  cat("  Muestras:", ncol(counts_df) - 1, "\n")
+  cat("\n Próximo: Script 04_Analisis_Diferencial_DESeq2\n")
+} else {
+  cat("⚠️ Ejecuta la Sección 4 primero\n")
+}
+```
+
+```{r session-info}
+sessionInfo()
+```

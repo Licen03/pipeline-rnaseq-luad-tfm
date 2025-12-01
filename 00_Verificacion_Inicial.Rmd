@@ -1,0 +1,274 @@
+---
+title: "Verificación Inicial del Proyecto RNA-seq"
+author: "JoseHidalgo"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    code_folding: show
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = TRUE)
+
+# Definir directorio del proyecto
+project_dir <- "C:/Users/10935/Documents/Proyecto_Adenocarcinoma_RNAseq"
+knitr::opts_knit$set(root.dir = project_dir)
+```
+
+# Introducción
+
+Este documento verifica la estructura inicial del proyecto de análisis RNA-seq para detección de biomarcadores en adenocarcinoma de pulmón.
+
+**Diseño experimental:**
+- 10 muestras tumorales (NSCLC tissue)
+- 10 muestras normales (non-malignant tissue)
+- Secuenciación paired-end, unstranded
+- Plataforma: Illumina HiSeq 2500
+
+---
+
+# 1. Confirmar Directorio del Proyecto
+```{r confirm-directory}
+cat("📁 Directorio del proyecto:", getwd(), "\n")
+cat("✓ Directorio configurado correctamente\n")
+```
+
+---
+
+# 2. Verificar Archivos FASTQ
+```{r verify-fastq}
+fastq_dir <- "00_raw_data/fastq"
+fastq_files <- list.files(fastq_dir, pattern = "\\.fastq\\.gz$", full.names = FALSE)
+
+cat("  ARCHIVOS FASTQ\n")
+
+if (length(fastq_files) > 0) {
+  # Contar archivos R1 y R2 (paired-end)
+  r1_files <- grep("_1\\.fastq\\.gz$", fastq_files, value = TRUE)
+  r2_files <- grep("_2\\.fastq\\.gz$", fastq_files, value = TRUE)
+  
+  cat("✓ Total de archivos FASTQ:", length(fastq_files), "\n")
+  cat("  - Archivos R1 (forward):", length(r1_files), "\n")
+  cat("  - Archivos R2 (reverse):", length(r2_files), "\n")
+  cat("  - Total de muestras:", length(r1_files), "\n\n")
+  
+} else {
+  cat("✗ NO se encontraron archivos FASTQ\n")
+}
+```
+
+---
+
+# 2.1. Descomprimir Archivos FASTQ (Opcional)
+
+**Nota:** La mayoría de herramientas bioinformáticas leen archivos `.fastq.gz` sin necesidad de descomprimirlos. Solo descomprimir si es necesario.
+
+**Para ejecutar:** Cambiar `eval=FALSE` a `eval=TRUE`.
+```{r decompress-fastq, eval=FALSE}
+library(R.utils)
+
+fastq_dir <- "00_raw_data/fastq"
+fastq_gz_files <- list.files(fastq_dir, pattern = "\\.fastq\\.gz$", full.names = TRUE)
+
+cat("Descomprimiendo", length(fastq_gz_files), "archivos FASTQ...\n")
+cat("⚠️  Esto puede tardar 30-60 minutos\n\n")
+
+for (i in seq_along(fastq_gz_files)) {
+  file_gz <- fastq_gz_files[i]
+  cat(sprintf("[%d/%d] %s\n", i, length(fastq_gz_files), basename(file_gz)))
+  R.utils::gunzip(file_gz, remove = FALSE, overwrite = TRUE)
+}
+
+cat("\n✓ Descompresión completada\n")
+```
+
+---
+---
+
+# 3. Preparación de Metadata para DESeq2
+
+## 3.1. Lectura de Archivos Originales
+```{r read-metadata}
+library(tidyverse)
+
+metadata_dir <- "00_raw_data/metadata"
+
+# Leer archivos CSV
+sra_table <- read.csv(file.path(metadata_dir, "SraRunTable.csv"), 
+                      stringsAsFactors = FALSE)
+samplesheet <- read.csv(file.path(metadata_dir, "samplesheet.csv"), 
+                        stringsAsFactors = FALSE)
+
+cat("✓ SraRunTable.csv:", nrow(sra_table), "muestras\n")
+cat("✓ samplesheet.csv:", nrow(samplesheet), "muestras\n")
+```
+
+## 3.2. Crear Metadata Consolidado
+```{r create-consolidated-metadata}
+# Crear metadata consolidado para DESeq2
+metadata <- sra_table %>%
+  select(Run, source_name, Histology, gender, AGE, stage_tnm) %>%
+  mutate(
+    # Crear columna de condición (Normal como referencia para DESeq2)
+    condition = ifelse(grepl("NSCLC", source_name), "Tumor", "Normal"),
+    condition = factor(condition, levels = c("Normal", "Tumor")),
+    
+    # ID de muestra
+    sample_id = Run,
+    
+    # Convertir Histology a factor
+    histology_grade = ifelse(is.na(Histology), "NA", as.character(Histology)),
+    histology_grade = factor(histology_grade)
+  ) %>%
+  # Unir con información de archivos FASTQ
+  left_join(samplesheet %>% select(sample, fastq_1, fastq_2, strandedness), 
+            by = c("Run" = "sample")) %>%
+  # Corregir rutas de archivos FASTQ
+  mutate(
+    fastq_1 = gsub("raw_data_fastq/", "00_raw_data/fastq/", fastq_1),
+    fastq_2 = gsub("raw_data_fastq/", "00_raw_data/fastq/", fastq_2)
+  ) %>%
+  # Reordenar columnas
+  select(sample_id, condition, fastq_1, fastq_2, strandedness, 
+         gender, AGE, histology_grade, stage_tnm, source_name)
+
+# Mostrar resumen
+cat("METADATA CONSOLIDADO PARA DESeq2\n")
+
+cat("Total de muestras:", nrow(metadata), "\n")
+cat("\nMuestras por condición:\n")
+print(table(metadata$condition))
+
+cat("\n\nPrimeras 3 muestras tumorales:\n")
+print(head(metadata %>% filter(condition == "Tumor") %>% 
+             select(sample_id, condition, gender, AGE, histology_grade), 3))
+
+cat("\n\nPrimeras 3 muestras normales:\n")
+print(head(metadata %>% filter(condition == "Normal") %>% 
+             select(sample_id, condition, fastq_1), 3))
+
+# Guardar metadata consolidado
+write.csv(metadata, 
+          "00_raw_data/metadata/metadata_consolidado.csv", 
+          row.names = FALSE, quote = FALSE)
+
+# Versión simplificada para DESeq2
+metadata_deseq <- metadata %>%
+  select(sample_id, condition, fastq_1, fastq_2)
+
+write.csv(metadata_deseq, 
+          "00_raw_data/metadata/metadata_deseq2.csv", 
+          row.names = FALSE, quote = FALSE)
+
+cat("\n\n✓ Archivos guardados:\n")
+cat("  - metadata_consolidado.csv (información completa)\n")
+cat("  - metadata_deseq2.csv (esencial para análisis)\n")
+```
+
+---
+
+# 4. Verificar Genoma de Referencia y Anotación
+```{r verify-reference}
+# Genoma
+genome_file <- "03_genome_reference/genome_fasta/GRCh38.primary_assembly.genome.fa.gz"
+if (file.exists(genome_file)) {
+  cat("✓ Genoma encontrado (comprimido)\n")
+  cat("  Size:", round(file.info(genome_file)$size / (1024^2), 2), "MB\n")
+} else {
+  cat("✗ Genoma NO encontrado\n")
+  cat("   Descargalo de:\n")
+  cat("   https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_47/GRCh38.primary_assembly.genome.fa.gz\n")
+}
+
+# Anotación GTF
+cat("\n")
+gtf_file <- "03_genome_reference/annotation/gencode.v47.primary_assembly.annotation.gtf.gz"
+if (file.exists(gtf_file)) {
+  cat("✓ Anotacion GTF encontrada (comprimida)\n")
+  cat("  Size:", round(file.info(gtf_file)$size / (1024^2), 2), "MB\n")
+} else {
+  cat("✗ Anotación GTF NO encontrada\n")
+  cat("   Descárgala de:\n")
+  cat("   https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_47/gencode.v47.primary_assembly.annotation.gtf.gz\n")
+}
+```
+
+---
+
+# 5. Descomprimir Archivos de Referencia
+
+**⚠️ EJECUTAR SOLO UNA VEZ:** Para ejecutar hay que cambiar de `eval=FALSE` a `eval=TRUE`.
+```{r decompress-reference, eval=FALSE}
+# Instalar paquete si no lo tienes
+if (!require("R.utils")) install.packages("R.utils")
+library(R.utils)
+
+cat("Descomprimiendo archivos de referencia...\n\n")
+
+# Descomprimir genoma
+genome_gz <- "03_genome_reference/genome_fasta/GRCh38.primary_assembly.genome.fa.gz"
+if (file.exists(genome_gz)) {
+  cat("⏳ Descomprimiendo genoma (puede tardar varios minutos)...\n")
+  R.utils::gunzip(genome_gz, remove = FALSE, overwrite = TRUE)
+  cat("✓ Genoma descomprimido\n\n")
+}
+
+# Descomprimir GTF
+gtf_gz <- "03_genome_reference/annotation/gencode.v47.primary_assembly.annotation.gtf.gz"
+if (file.exists(gtf_gz)) {
+  cat("⏳ Descomprimiendo GTF...\n")
+  R.utils::gunzip(gtf_gz, remove = FALSE, overwrite = TRUE)
+  cat("✓ GTF descomprimido\n\n")
+}
+
+cat("✅ Descompresión completada\n")
+```
+
+---
+
+# 6. Resumen Final
+```{r summary}
+# Verificar componentes
+fastq_ok <- length(fastq_files) >= 40
+metadata_ok <- file.exists("00_raw_data/metadata/metadata_consolidado.csv")
+genome_ok <- file.exists(genome_file)
+gtf_ok <- file.exists(gtf_file)
+
+checks <- data.frame(
+  Componente = c(
+    "Archivos FASTQ", 
+    "Metadata consolidado", 
+    "Genoma de referencia", 
+    "Anotación GTF"
+  ),
+  Estado = c(
+    ifelse(fastq_ok, "✓ OK", "✗ FALTA"),
+    ifelse(metadata_ok, "✓ OK", "✗ FALTA"),
+    ifelse(genome_ok, "✓ OK", "✗ FALTA"),
+    ifelse(gtf_ok, "✓ OK", "✗ FALTA")
+  ),
+  stringsAsFactors = FALSE
+)
+
+print(checks)
+
+cat("\n")
+if (all(checks$Estado == "✓ OK")) {
+  cat("VERIFICACIÓN INICIAL COMPLETA\n\n")
+  cat("Próximos pasos:\n")
+  cat("   1. Descomprimir genoma y GTF (Sección 5)\n")
+  cat("   2. Control de calidad con FastQC (Script 01)\n")
+  cat("   3. Construir índice y alineamiento con Rsubread (Script 02)\n")
+} else {
+  cat("⚠️  Completa los componentes faltantes.\n")
+}
+```
+
+---
+
+# Información de Sesión
+```{r session-info}
+sessionInfo()
+```

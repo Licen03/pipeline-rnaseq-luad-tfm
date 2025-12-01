@@ -1,0 +1,133 @@
+---
+title: "Construcción de Índice y Alineamiento - Rsubread"
+author: "JoseHidalgo"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    code_folding: show
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = TRUE)
+project_dir <- "C:/Users/10935/Documents/Proyecto_Adenocarcinoma_RNAseq"
+knitr::opts_knit$set(root.dir = project_dir)
+```
+
+# 1. Cargar Librerías
+```{r load-libraries, message=FALSE, warning=FALSE}
+library(Rsubread)
+library(tidyverse)
+
+cat("✓ Rsubread versión:", as.character(packageVersion("Rsubread")), "\n")
+```
+
+# 2. Verificar Archivos de Referencia
+```{r verify-files}
+genome_file <- "03_genome_reference/genome_fasta/GRCh38.primary_assembly.genome.fa"
+gtf_file <- "03_genome_reference/annotation/gencode.v47.primary_assembly.annotation.gtf"
+
+cat("Genoma:", ifelse(file.exists(genome_file), "✓ OK", "✗ FALTA"), "\n")
+cat("GTF:", ifelse(file.exists(gtf_file), "✓ OK", "✗ FALTA"), "\n")
+```
+
+# 3. Construir Índice del Genoma
+
+**Tiempo estimado: 30-60 min | RAM: 8-16 GB | Espacio: ~5 GB**
+
+**Para ejecutar:** Cambiar `eval=FALSE` a `eval=TRUE`.
+```{r build-index, eval=FALSE}
+cat("Construyendo índice del genoma...\n")
+cat("Inicio:", format(Sys.time(), "%H:%M:%S"), "\n\n")
+
+buildindex(
+  basename = "03_genome_reference/hisat2_index/GRCh38_subread",
+  reference = "03_genome_reference/genome_fasta/GRCh38.primary_assembly.genome.fa",
+  indexSplit = FALSE,
+  memory = 8000
+)
+
+cat("\n✓ Índice construido\n")
+cat("Fin:", format(Sys.time(), "%H:%M:%S"), "\n")
+```
+
+# 4. Verificar Índice
+```{r verify-index}
+index_files <- list.files("03_genome_reference/hisat2_index", 
+                          pattern = "GRCh38_subread")
+
+if (length(index_files) > 0) {
+  cat("✓ Índice encontrado:", length(index_files), "archivos\n")
+  
+  total_size <- sum(file.info(
+    list.files("03_genome_reference/hisat2_index", 
+               pattern = "GRCh38_subread", 
+               full.names = TRUE))$size) / (1024^3)
+  cat("  Tamaño:", round(total_size, 2), "GB\n")
+} else {
+  cat("✗ Índice NO encontrado. Ejecuta Sección 3.\n")
+}
+```
+
+# 5. Cargar Metadata
+```{r load-metadata}
+metadata <- read.csv("00_raw_data/metadata/metadata_consolidado.csv", 
+                     stringsAsFactors = FALSE)
+
+cat("Muestras:", nrow(metadata), 
+    "(", sum(metadata$condition == "Tumor"), "Tumor +",
+    sum(metadata$condition == "Normal"), "Normal )\n")
+```
+
+# 6. Alineamiento
+
+**Tiempo estimado: 4-8 horas | RAM: 8-12 GB | Espacio: ~80 GB**
+
+**Para ejecutar:** Cambiar `eval=FALSE` a `eval=TRUE`.
+```{r alignment, eval=FALSE}
+cat("Iniciando alineamiento...\n")
+cat("Inicio:", format(Sys.time(), "%H:%M:%S"), "\n\n")
+
+index_base <- "03_genome_reference/hisat2_index/GRCh38_subread"
+output_dir <- "04_alignment/bam_files"
+
+for (i in 1:nrow(metadata)) {
+  sample_id <- metadata$sample_id[i]
+  cat(sprintf("[%d/%d] %s\n", i, nrow(metadata), sample_id))
+  
+  align(
+    index = index_base,
+    readfile1 = metadata$fastq_1[i],
+    readfile2 = metadata$fastq_2[i],
+    output_file = file.path(output_dir, paste0(sample_id, ".bam")),
+    type = "rna",
+    nthreads = 4,
+    unique = FALSE,
+    nBestLocations = 1,
+    maxMismatches = 3,
+    phredOffset = 33
+  )
+}
+
+cat("\n✓ Alineamiento completado\n")
+cat("Fin:", format(Sys.time(), "%H:%M:%S"), "\n")
+```
+
+# 7. Resumen
+```{r summary}
+index_ok <- length(list.files("03_genome_reference/hisat2_index", 
+                              pattern = "GRCh38_subread")) > 0
+n_bams <- length(list.files("04_alignment/bam_files", pattern = "\\.bam$"))
+
+cat("Índice:", ifelse(index_ok, "✓ OK", "⚠️  Pendiente"), "\n")
+cat("BAMs alineados:", n_bams, "/", nrow(metadata), "\n")
+
+if (index_ok && n_bams == nrow(metadata)) {
+  cat("\n ¡Listo! Próximo: Script 03_Cuantificacion_featureCounts\n")
+}
+```
+
+```{r session-info}
+sessionInfo()
+```
