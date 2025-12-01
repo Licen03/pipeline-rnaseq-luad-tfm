@@ -24,6 +24,15 @@ Pipeline bioinformático reproducible para el análisis de datos RNA-seq orienta
 | `04_Analisis_Diferencial_DESeq2.Rmd` | Análisis de expresión diferencial |
 | `05_Analisis_Funcional.Rmd` | Enriquecimiento funcional (GO, KEGG, GSEA) |
 
+## Archivos de Resultados
+
+El repositorio incluye archivos CSV con los resultados del análisis de expresión diferencial:
+
+| Archivo | Contenido |
+|---------|-----------|
+| `DEGs_con_simbolos_completo.csv` | Lista completa de genes diferencialmente expresados |
+| `Anexo_Top200_DEGs.csv` | Lista de los 200 primeros genes diferencialmente expresados |
+
 ## Requisitos
 
 ### Software
