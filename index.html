@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LUAD RNA-seq Analysis Dashboard · José Hidalgo</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.26.0/plotly.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,600;1,300&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface2: #21262d;
+    --border: #30363d;
+    --accent: #58a6ff;
+    --accent2: #f78166;
+    --accent3: #56d364;
+    --accent4: #e3b341;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --up: #56d364;
+    --down: #f85149;
+    --neutral: #58a6ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 13px;
+    min-height: 100vh;
+  }
+
+  /* HEADER */
+  .header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .logo {
+    width: 32px; height: 32px;
+    background: var(--accent);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 600; font-size: 14px;
+    color: #0d1117;
+  }
+  .header-title { font-size: 14px; font-weight: 600; color: var(--text); }
+  .header-sub { font-size: 11px; color: var(--muted); margin-top: 1px; font-family: 'IBM Plex Mono', monospace; }
+  .header-badge {
+    background: #1f2d1f;
+    border: 1px solid #2ea043;
+    color: var(--accent3);
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  /* NAV TABS */
+  .nav {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 0 28px;
+    display: flex;
+    gap: 0;
+  }
+  .tab {
+    padding: 11px 18px;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+    white-space: nowrap;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* LAYOUT */
+  .content { padding: 22px 28px; max-width: 1400px; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* GRID */
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+  .grid-full { margin-bottom: 16px; }
+
+  /* STAT CARD */
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    position: relative;
+    overflow: hidden;
+  }
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 3px; height: 100%;
+    background: var(--accent);
+  }
+  .stat-card.green::before { background: var(--up); }
+  .stat-card.red::before { background: var(--down); }
+  .stat-card.yellow::before { background: var(--accent4); }
+  .stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; font-family: 'IBM Plex Mono', monospace; }
+  .stat-value { font-size: 26px; font-weight: 600; color: var(--text); font-family: 'IBM Plex Mono', monospace; line-height: 1; }
+  .stat-sub { font-size: 11px; color: var(--muted); margin-top: 5px; }
+
+  /* CHART CARD */
+  .chart-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .chart-header {
+    padding: 14px 18px 10px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .chart-title { font-size: 12px; font-weight: 600; color: var(--text); font-family: 'IBM Plex Mono', monospace; }
+  .chart-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .chart-body { padding: 8px; }
+
+  /* TABLE */
+  .data-table { width: 100%; border-collapse: collapse; }
+  .data-table th {
+    text-align: left; padding: 8px 14px;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--muted); border-bottom: 1px solid var(--border);
+    font-family: 'IBM Plex Mono', monospace; font-weight: 600;
+  }
+  .data-table td { padding: 8px 14px; font-size: 12px; border-bottom: 1px solid #21262d; }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table tr:hover td { background: var(--surface2); }
+  .tag {
+    display: inline-block;
+    padding: 2px 8px; border-radius: 3px;
+    font-size: 10px; font-family: 'IBM Plex Mono', monospace;
+    font-weight: 600;
+  }
+  .tag-up { background: #1a2e1a; color: var(--up); }
+  .tag-down { background: #2e1a1a; color: var(--down); }
+  .tag-blue { background: #1a2233; color: var(--accent); }
+
+  /* SECTION LABEL */
+  .section-label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--muted); margin-bottom: 10px;
+    font-family: 'IBM Plex Mono', monospace;
+    padding-bottom: 6px; border-bottom: 1px solid var(--border);
+  }
+
+  /* PROGRESS BAR */
+  .progress-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .progress-label { font-size: 11px; color: var(--muted); width: 220px; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .progress-bar-bg { flex: 1; background: var(--surface2); border-radius: 2px; height: 10px; }
+  .progress-bar-fill { height: 10px; border-radius: 2px; background: var(--accent); transition: width 0.6s ease; }
+  .progress-val { font-size: 10px; color: var(--muted); font-family: 'IBM Plex Mono', monospace; width: 36px; text-align: right; flex-shrink: 0; }
+
+  /* NES badge */
+  .nes { font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; }
+  .nes-pos { color: var(--up); }
+  .nes-neg { color: var(--down); }
+
+  /* QC pills */
+  .qc-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .qc-pill {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 11px;
+    display: flex; flex-direction: column; gap: 2px;
+    min-width: 130px;
+  }
+  .qc-pill-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; font-family: 'IBM Plex Mono', monospace; }
+  .qc-pill-val { font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; color: var(--accent3); }
+
+  /* Method steps */
+  .steps { display: flex; flex-direction: column; gap: 0; }
+  .step { display: flex; gap: 14px; position: relative; }
+  .step-line { display: flex; flex-direction: column; align-items: center; }
+  .step-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); margin-top: 3px; flex-shrink: 0; }
+  .step-connector { width: 2px; flex: 1; background: var(--border); margin-top: 2px; min-height: 20px; }
+  .step:last-child .step-connector { display: none; }
+  .step-content { padding-bottom: 14px; }
+  .step-name { font-size: 12px; font-weight: 600; color: var(--text); font-family: 'IBM Plex Mono', monospace; }
+  .step-detail { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  /* footer */
+  .footer {
+    padding: 16px 28px;
+    border-top: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 24px;
+  }
+  .footer-left { font-size: 11px; color: var(--muted); }
+  .footer-links { display: flex; gap: 16px; }
+  .footer-link { font-size: 11px; color: var(--accent); text-decoration: none; font-family: 'IBM Plex Mono', monospace; }
+  .footer-link:hover { text-decoration: underline; }
+
+  @media (max-width: 900px) {
+    .grid-4 { grid-template-columns: repeat(2, 1fr); }
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    .content { padding: 14px; }
+    .header { padding: 12px 14px; }
+    .nav { padding: 0 14px; overflow-x: auto; }
+  }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="header-left">
+    <div class="logo">R</div>
+    <div>
+      <div class="header-title">LUAD RNA-seq Analysis Dashboard</div>
+      <div class="header-sub">GSE · PRJNA320473 · GRCh38.p14 · DESeq2 v1.46.0</div>
+    </div>
+  </div>
+  <div class="header-badge">✓ M.Sc. Thesis · José E. Hidalgo Suero</div>
+</div>
+
+<!-- NAV -->
+<div class="nav">
+  <div class="tab active" onclick="showTab('overview')">01 · Overview</div>
+  <div class="tab" onclick="showTab('degs')">02 · Diff. Expression</div>
+  <div class="tab" onclick="showTab('go')">03 · GO Enrichment</div>
+  <div class="tab" onclick="showTab('kegg')">04 · KEGG Pathways</div>
+  <div class="tab" onclick="showTab('gsea')">05 · GSEA</div>
+  <div class="tab" onclick="showTab('methods')">06 · Methods</div>
+</div>
+
+<div class="content">
+
+<!-- ===================== PANEL 1: OVERVIEW ===================== -->
+<div id="panel-overview" class="panel active">
+  <div class="grid-4">
+    <div class="stat-card">
+      <div class="stat-label">Total DEGs</div>
+      <div class="stat-value">6,989</div>
+      <div class="stat-sub">|log2FC| &gt; 1 · padj &lt; 0.05</div>
+    </div>
+    <div class="stat-card green">
+      <div class="stat-label">Upregulated</div>
+      <div class="stat-value" style="color:var(--up)">4,328</div>
+      <div class="stat-sub">61.9% of all DEGs</div>
+    </div>
+    <div class="stat-card red">
+      <div class="stat-label">Downregulated</div>
+      <div class="stat-value" style="color:var(--down)">2,661</div>
+      <div class="stat-sub">38.1% of all DEGs</div>
+    </div>
+    <div class="stat-card yellow">
+      <div class="stat-label">Enriched Terms</div>
+      <div class="stat-value" style="color:var(--accent4)">1,384</div>
+      <div class="stat-sub">GO-BP + GO-MF + GO-CC</div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="chart-card">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title">DEG Distribution</div>
+          <div class="chart-desc">Upregulated vs downregulated in tumor tissue</div>
+        </div>
+      </div>
+      <div class="chart-body">
+        <div id="pie-deg" style="height:240px"></div>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title">Quality Control Summary</div>
+          <div class="chart-desc">FastQC + MultiQC · 20 samples · 40 FASTQ files</div>
+        </div>
+      </div>
+      <div class="chart-body" style="padding: 14px 18px;">
+        <div class="qc-row">
+          <div class="qc-pill">
+            <span class="qc-pill-label">Phred Score</span>
+            <span class="qc-pill-val">&gt; 30</span>
+          </div>
+          <div class="qc-pill">
+            <span class="qc-pill-label">GC Content</span>
+            <span class="qc-pill-val">~50%</span>
+          </div>
+          <div class="qc-pill">
+            <span class="qc-pill-label">Duplication</span>
+            <span class="qc-pill-val">41–56%</span>
+          </div>
+          <div class="qc-pill">
+            <span class="qc-pill-label">Alignment Rate</span>
+            <span class="qc-pill-val">82.7–86.5%</span>
+          </div>
+          <div class="qc-pill">
+            <span class="qc-pill-label">Adapter Contam.</span>
+            <span class="qc-pill-val">None</span>
+          </div>
+          <div class="qc-pill">
+            <span class="qc-pill-label">Trimming</span>
+            <span class="qc-pill-val">Not needed</span>
+          </div>
+        </div>
+        <div style="margin-top:14px">
+          <div class="section-label">Alignment rate per condition</div>
+          <div class="progress-row"><span class="progress-label">Normal samples (mean)</span><div class="progress-bar-bg"><div class="progress-bar-fill" style="width:85%;background:var(--neutral)"></div></div><span class="progress-val">85%</span></div>
+          <div class="progress-row"><span class="progress-label">Tumor samples (mean)</span><div class="progress-bar-bg"><div class="progress-bar-fill" style="width:84%;background:var(--accent2)"></div></div><span class="progress-val">84%</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="chart-card">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title">PCA · Tumor vs Normal</div>
+          <div class="chart-desc">PC1 explains 50% variance · PC2 explains 14%</div>
+        </div>
+      </div>
+      <div class="chart-body">
+        <div id="pca-plot" style="height:280px"></div>
+      </div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title">Top DEGs · log2 Fold Change</div>
+          <div class="chart-desc">Most differentially expressed genes (tumor vs normal)</div>
+        </div>
+      </div>
+      <div class="chart-body">
+        <div id="top-degs-bar" style="height:280px"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== PANEL 2: DIFF EXPRESSION ===================== -->
+<div id="panel-degs" class="panel">
+  <div class="grid-3">
+    <div class="stat-card"><div class="stat-label">log2FC Range</div><div class="stat-value" style="font-size:18px">−7.40 → 22.79</div><div class="stat-sub">Extreme range indicating strong dysregulation</div></div>
+    <div class="stat-card green"><div class="stat-label">Top Upregulated</div><div class="stat-value" style="font-size:18px;color:var(--up)">MMP13</div><div class="stat-sub">log2FC = 9.17 · ECM remodeling</div></div>
+    <div class="stat-card red"><div class="stat-label">Top Downregulated</div><div class="stat-value" style="font-size:18px;color:var(--down)">SLC6A4</div><div class="stat-sub">log2FC = −7.40 · Serotonin transporter</div></div>
+  </div>
+
+  <div class="grid-2">
+    <div class="chart-card">
+      <div class="chart-header"><div><div class="chart-title">Volcano Plot · Tumor vs Normal</div><div class="chart-desc">log2FC vs −log10(padj) · red = significant DEGs</div></div></div>
+      <div class="chart-body"><div id="volcano" style="height:360px"></div></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-header"><div><div class="chart-title">Top 20 DEGs · Full Table</div><div class="chart-desc">Sorted by |log2FoldChange|</div></div></div>
+      <div class="chart-body" style="padding:0">
+        <table class="data-table">
+          <thead><tr><th>#</th><th>Gene Symbol</th><th>log2FC</th><th>padj</th><th>Direction</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td><b>CSN1S1</b></td><td class="nes nes-pos">22.79</td><td>&lt; 0.001</td><td><span class="tag tag-up">↑ UP</span></td></tr>
+            <tr><td>2</td><td><b>PADI3</b></td><td class="nes nes-pos">22.16</td><td>&lt; 0.001</td><td><span class="tag tag-up">↑ UP</span></td></tr>
+            <tr><td>3</td><td><b>MMP13</b></td><td class="nes nes-pos">9.17</td><td>&lt; 0.001</td><td><span class="tag tag-up">↑ UP</span></td></tr>
+            <tr><td>4</td><td><b>COL11A1</b></td><td class="nes nes-pos">7.84</td><td>&lt; 0.001</td><td><span class="tag tag-up">↑ UP</span></td></tr>
+            <tr><td>5</td><td><b>PRAME</b></td><td class="nes nes-pos">7.21</td><td>&lt; 0.001</td><td><span class="tag tag-up">↑ UP</span></td></tr>
+            <tr><td>6</td><td><b>KRT16</b></td><td class="nes nes-pos">6.93</td><td>&lt; 0.001</td><td><span class="tag tag-up">↑ UP</span></td></tr>
+            <tr><td>7</td><td><b>COL1A1</b></td><td class="nes nes-pos">6.40</td><td>&lt; 0.001</td><td><span class="tag tag-up">↑ UP</span></td></tr>
+            <tr><td>8</td><td><b>SLC6A4</b></td><td class="nes nes-neg">−7.40</td><td>&lt; 0.001</td><td><span class="tag tag-down">↓ DOWN</span></td></tr>
+            <tr><td>9</td><td><b>ITLN1</b></td><td class="nes nes-neg">−6.83</td><td>&lt; 0.001</td><td><span class="tag tag-down">↓ DOWN</span></td></tr>
+            <tr><td>10</td><td><b>CA4</b></td><td class="nes nes-neg">−5.69</td><td>&lt; 0.001</td><td><span class="tag tag-down">↓ DOWN</span></td></tr>
+            <tr><td colspan="5" style="color:var(--muted);font-size:11px;padding:10px 14px">+ 6,979 additional DEGs · Full list available on GitHub</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="chart-card grid-full">
+    <div class="chart-header"><div><div class="chart-title">MA Plot · Mean Expression vs log2FC</div><div class="chart-desc">Blue points = significant DEGs · confirms expression-independent differential signal</div></div></div>
+    <div class="chart-body"><div id="ma-plot" style="height:280px"></div></div>
+  </div>
+</div>
+
+<!-- ===================== PANEL 3: GO ENRICHMENT ===================== -->
+<div id="panel-go" class="panel">
+  <div class="grid-3">
+    <div class="stat-card"><div class="stat-label">GO-BP Terms</div><div class="stat-value">1,123</div><div class="stat-sub">Biological Processes enriched</div></div>
+    <div class="stat-card green"><div class="stat-label">GO-MF Terms</div><div class="stat-value" style="color:var(--accent3)">145</div><div class="stat-sub">Molecular Functions enriched</div></div>
+    <div class="stat-card yellow"><div class="stat-label">GO-CC Terms</div><div class="stat-value" style="color:var(--accent4)">116</div><div class="stat-sub">Cellular Components enriched</div></div>
+  </div>
+
+  <div class="grid-2">
+    <div class="chart-card">
+      <div class="chart-header"><div><div class="chart-title">GO Biological Process · Top 20</div><div class="chart-desc">GeneRatio = DEGs in term / total DEGs · BH correction</div></div></div>
+      <div class="chart-body"><div id="go-bp-chart" style="height:420px"></div></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-header"><div><div class="chart-title">GO Enrichment Breakdown</div><div class="chart-desc">Distribution across ontology categories</div></div></div>
+      <div class="chart-body">
+        <div id="go-donut" style="height:220px"></div>
+        <div style="padding: 8px 10px">
+          <div class="section-label">Top GO-MF Terms</div>
+          <div class="progress-row"><span class="progress-label">Antigen binding</span><div class="progress-bar-bg"><div class="progress-bar-fill" style="width:100%;background:var(--accent)"></div></div><span class="progress-val">107</span></div>
+          <div class="progress-row"><span class="progress-label">Structural constituent ECM</span><div class="progress-bar-bg"><div class="progress-bar-fill" style="width:80%;background:var(--accent)"></div></div><span class="progress-val">86</span></div>
+          <div class="section-label" style="margin-top:10px">Top GO-CC Terms</div>
+          <div class="progress-row"><span class="progress-label">Immunoglobulin complex</span><div class="progress-bar-bg"><div class="progress-bar-fill" style="width:100%;background:var(--accent4)"></div></div><span class="progress-val">134</span></div>
+          <div class="progress-row"><span class="progress-label">Collagen extracellular matrix</span><div class="progress-bar-bg"><div class="progress-bar-fill" style="width:100%;background:var(--accent4)"></div></div><span class="progress-val">198</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== PANEL 4: KEGG ===================== -->
+<div id="panel-kegg" class="panel">
+  <div class="grid-2">
+    <div class="stat-card"><div class="stat-label">Significant KEGG Pathways</div><div class="stat-value">38</div><div class="stat-sub">padj &lt; 0.05 · BH correction</div></div>
+    <div class="stat-card yellow"><div class="stat-label">Top Pathway</div><div class="stat-value" style="font-size:15px;color:var(--accent4)">PI3K-Akt Signaling</div><div class="stat-sub">Survival, proliferation & drug resistance</div></div>
+  </div>
+
+  <div class="chart-card grid-full">
+    <div class="chart-header"><div><div class="chart-title">KEGG Pathways · Top 20</div><div class="chart-desc">GeneRatio · point size = gene count · color = adjusted p-value</div></div></div>
+    <div class="chart-body"><div id="kegg-chart" style="height:520px"></div></div>
+  </div>
+</div>
+
+<!-- ===================== PANEL 5: GSEA ===================== -->
+<div id="panel-gsea" class="panel">
+  <div class="grid-4">
+    <div class="stat-card green"><div class="stat-label">GO Terms Enriched</div><div class="stat-value" style="color:var(--up)">585</div><div class="stat-sub">GSEA · gseGO()</div></div>
+    <div class="stat-card yellow"><div class="stat-label">KEGG Pathways</div><div class="stat-value" style="color:var(--accent4)">50</div><div class="stat-sub">GSEA · gseKEGG()</div></div>
+    <div class="stat-card green"><div class="stat-label">Top NES (activated)</div><div class="stat-value" style="color:var(--up);font-size:18px">+2.17</div><div class="stat-sub">Cornified envelope formation</div></div>
+    <div class="stat-card red"><div class="stat-label">Top NES (suppressed)</div><div class="stat-value" style="color:var(--down);font-size:18px">−2.65</div><div class="stat-sub">Graft-versus-host disease</div></div>
+  </div>
+
+  <div class="grid-2">
+    <div class="chart-card">
+      <div class="chart-header"><div><div class="chart-title">GSEA GO-BP · Activated vs Suppressed</div><div class="chart-desc">NES = Normalized Enrichment Score · padj &lt; 0.05</div></div></div>
+      <div class="chart-body"><div id="gsea-go-chart" style="height:380px"></div></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-header"><div><div class="chart-title">GSEA KEGG · Activated vs Suppressed</div><div class="chart-desc">NES = Normalized Enrichment Score · padj &lt; 0.05</div></div></div>
+      <div class="chart-body"><div id="gsea-kegg-chart" style="height:380px"></div></div>
+    </div>
+  </div>
+
+  <div class="chart-card grid-full">
+    <div class="chart-header"><div><div class="chart-title">Key Biological Interpretation</div><div class="chart-desc">Summary of activated and suppressed processes in LUAD tumor tissue</div></div></div>
+    <div class="chart-body" style="padding: 16px 18px;">
+      <div class="grid-2">
+        <div>
+          <div class="section-label">Activated in Tumor</div>
+          <table class="data-table">
+            <thead><tr><th>Process / Pathway</th><th>NES</th><th>Context</th></tr></thead>
+            <tbody>
+              <tr><td>Keratinization (GO-BP)</td><td><span class="nes nes-pos">+2.13</span></td><td style="color:var(--muted);font-size:11px">Tumor tissue remodeling</td></tr>
+              <tr><td>Collagen fibril organization (GO-BP)</td><td><span class="nes nes-pos">+2.00</span></td><td style="color:var(--muted);font-size:11px">ECM dysregulation</td></tr>
+              <tr><td>Cornified envelope formation (KEGG)</td><td><span class="nes nes-pos">+2.17</span></td><td style="color:var(--muted);font-size:11px">Structural remodeling</td></tr>
+              <tr><td>p53 signaling pathway (KEGG)</td><td><span class="nes nes-pos">+1.71</span></td><td style="color:var(--muted);font-size:11px">Genomic damage response</td></tr>
+              <tr><td>Cell cycle (KEGG)</td><td><span class="nes nes-pos">+1.60</span></td><td style="color:var(--muted);font-size:11px">Uncontrolled proliferation</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <div class="section-label">Suppressed in Tumor</div>
+          <table class="data-table">
+            <thead><tr><th>Process / Pathway</th><th>NES</th><th>Context</th></tr></thead>
+            <tbody>
+              <tr><td>Lipoprotein response (GO-BP)</td><td><span class="nes nes-neg">−2.38</span></td><td style="color:var(--muted);font-size:11px">Metabolic reprogramming</td></tr>
+              <tr><td>MHC complex assembly (GO-BP)</td><td><span class="nes nes-neg">−2.35</span></td><td style="color:var(--muted);font-size:11px">Antigen presentation loss</td></tr>
+              <tr><td>Graft-vs-host disease (KEGG)</td><td><span class="nes nes-neg">−2.65</span></td><td style="color:var(--muted);font-size:11px">Immune evasion signature</td></tr>
+              <tr><td>Antigen processing/presentation (KEGG)</td><td><span class="nes nes-neg">−2.38</span></td><td style="color:var(--muted);font-size:11px">MHC-I pathway suppressed</td></tr>
+              <tr><td>Allograft rejection (KEGG)</td><td><span class="nes nes-neg">−2.16</span></td><td style="color:var(--muted);font-size:11px">T-cell evasion</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== PANEL 6: METHODS ===================== -->
+<div id="panel-methods" class="panel">
+  <div class="grid-2">
+    <div class="chart-card">
+      <div class="chart-header"><div><div class="chart-title">Pipeline Architecture</div><div class="chart-desc">6 RMarkdown scripts · reproducible · R v4.4.2</div></div></div>
+      <div class="chart-body" style="padding:18px">
+        <div class="steps">
+          <div class="step"><div class="step-line"><div class="step-dot"></div><div class="step-connector"></div></div><div class="step-content"><div class="step-name">00 · Environment Setup</div><div class="step-detail">Directory structure · Reference genome (GRCh38.p14) · GTF annotation (GENCODE v47)</div></div></div>
+          <div class="step"><div class="step-line"><div class="step-dot" style="background:var(--accent4)"></div><div class="step-connector"></div></div><div class="step-content"><div class="step-name">01 · Quality Control</div><div class="step-detail">FastQC v0.12.1 · MultiQC v1.27 · 40 FASTQ files · Phred &gt;30 · No trimming needed</div></div></div>
+          <div class="step"><div class="step-line"><div class="step-dot" style="background:var(--accent2)"></div><div class="step-connector"></div></div><div class="step-content"><div class="step-name">02 · Alignment</div><div class="step-detail">Rsubread v2.20.0 · buildindex() + align() · paired-end · type=rna · maxMismatches=3</div></div></div>
+          <div class="step"><div class="step-line"><div class="step-dot" style="background:var(--up)"></div><div class="step-connector"></div></div><div class="step-content"><div class="step-name">03 · Quantification</div><div class="step-detail">featureCounts() · isPairedEnd=TRUE · GTF.featureType="exon" · countMultiMapping=FALSE</div></div></div>
+          <div class="step"><div class="step-line"><div class="step-dot" style="background:var(--down)"></div><div class="step-connector"></div></div><div class="step-content"><div class="step-name">04 · Differential Expression</div><div class="step-detail">DESeq2 v1.46.0 · Wald test · BH correction · |log2FC|&gt;1 · padj&lt;0.05 · VST normalization</div></div></div>
+          <div class="step"><div class="step-line"><div class="step-dot" style="background:var(--accent3)"></div><div class="step-connector"></div></div><div class="step-content"><div class="step-name">05 · Functional Enrichment</div><div class="step-detail">clusterProfiler v4.14.6 · enrichGO() · enrichKEGG() · gseGO() · gseKEGG() · org.Hs.eg.db</div></div></div>
+          <div class="step"><div class="step-line"><div class="step-dot" style="background:var(--muted)"></div></div><div class="step-content"><div class="step-name">06 · Symbol Mapping</div><div class="step-detail">mapIds() · AnnotationDbi · Ensembl → ENTREZ · sub() for version suffix removal</div></div></div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="chart-card" style="margin-bottom:16px">
+        <div class="chart-header"><div><div class="chart-title">Dataset</div></div></div>
+        <div class="chart-body" style="padding:14px 18px">
+          <table class="data-table">
+            <tbody>
+              <tr><td style="color:var(--muted)">Source</td><td>GEO · PRJNA320473 · SRP074349</td></tr>
+              <tr><td style="color:var(--muted)">Platform</td><td>Illumina HiSeq 2500</td></tr>
+              <tr><td style="color:var(--muted)">Sequencing</td><td>Paired-end · 12–16M reads/sample</td></tr>
+              <tr><td style="color:var(--muted)">Samples</td><td>10 tumor + 10 normal lung tissue</td></tr>
+              <tr><td style="color:var(--muted)">Reference genome</td><td>GRCh38.p14</td></tr>
+              <tr><td style="color:var(--muted)">GTF annotation</td><td>GENCODE v47</td></tr>
+              <tr><td style="color:var(--muted)">Pre-filter</td><td>rowSums(counts) ≥ 10</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header"><div><div class="chart-title">Software Stack</div></div></div>
+        <div class="chart-body" style="padding:14px 18px">
+          <table class="data-table">
+            <thead><tr><th>Package</th><th>Version</th><th>Purpose</th></tr></thead>
+            <tbody>
+              <tr><td>R</td><td><span class="tag tag-blue">4.4.2</span></td><td style="color:var(--muted)">Base environment</td></tr>
+              <tr><td>Rsubread</td><td><span class="tag tag-blue">2.20.0</span></td><td style="color:var(--muted)">Alignment + quantification</td></tr>
+              <tr><td>DESeq2</td><td><span class="tag tag-blue">1.46.0</span></td><td style="color:var(--muted)">Differential expression</td></tr>
+              <tr><td>clusterProfiler</td><td><span class="tag tag-blue">4.14.6</span></td><td style="color:var(--muted)">Functional enrichment</td></tr>
+              <tr><td>enrichplot</td><td><span class="tag tag-blue">1.26.6</span></td><td style="color:var(--muted)">Visualization</td></tr>
+              <tr><td>ggplot2</td><td><span class="tag tag-blue">3.5.1</span></td><td style="color:var(--muted)">Plots</td></tr>
+              <tr><td>FastQC / MultiQC</td><td><span class="tag tag-blue">0.12.1 / 1.27</span></td><td style="color:var(--muted)">QC</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div><!-- end content -->
+
+<div class="footer">
+  <div class="footer-left">José Eduardo Hidalgo Suero · M.Sc. Biostatistics & Bioinformatics · CEMP 2025</div>
+  <div class="footer-links">
+    <a class="footer-link" href="https://github.com/Licen03/pipeline-rnaseq-luad-tfm" target="_blank">github.com/Licen03</a>
+    <a class="footer-link" href="https://linkedin.com/in/josehidalgo1403" target="_blank">linkedin.com/in/josehidalgo1403</a>
+  </div>
+</div>
+
+<script>
+// TAB SWITCHING
+function showTab(name) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  event.target.classList.add('active');
+  // lazy render charts
+  if (!window.chartsRendered) window.chartsRendered = {};
+  if (!window.chartsRendered[name]) {
+    renderCharts(name);
+    window.chartsRendered[name] = true;
+  }
+}
+
+const BG = '#161b22';
+const BORDER = '#30363d';
+const TEXT = '#e6edf3';
+const MUTED = '#8b949e';
+const UP = '#56d364';
+const DOWN = '#f85149';
+const BLUE = '#58a6ff';
+const YELLOW = '#e3b341';
+const ORANGE = '#f78166';
+
+const plotlyBase = {
+  paper_bgcolor: BG,
+  plot_bgcolor: BG,
+  font: { family: 'IBM Plex Mono, monospace', color: TEXT, size: 10 },
+  margin: { t: 10, r: 10, b: 40, l: 10 },
+  xaxis: { gridcolor: BORDER, zerolinecolor: BORDER, tickfont: { size: 9 } },
+  yaxis: { gridcolor: BORDER, zerolinecolor: BORDER, tickfont: { size: 9 } },
+};
+
+function renderCharts(panel) {
+  const cfg = { responsive: true, displayModeBar: false };
+
+  if (panel === 'overview') {
+    // PIE
+    Plotly.newPlot('pie-deg', [{
+      type: 'pie',
+      values: [4328, 2661],
+      labels: ['Upregulated', 'Downregulated'],
+      marker: { colors: [UP, DOWN] },
+      hole: 0.55,
+      textinfo: 'percent+label',
+      textfont: { size: 11 },
+      hovertemplate: '<b>%{label}</b><br>%{value} genes<br>%{percent}<extra></extra>'
+    }], { ...plotlyBase, showlegend: false, margin: {t:10,r:10,b:10,l:10} }, cfg);
+
+    // PCA
+    const normal_x = [32,28,35,30,33,27,31,29,34,26];
+    const normal_y = [3,7,5,10,1,-4,8,-2,6,4];
+    const tumor_x = [-25,-30,-22,-28,-18,-15,-24,-20,-42,-48];
+    const tumor_y = [5,8,2,10,7,3,6,1,-35,-42];
+    Plotly.newPlot('pca-plot', [
+      { x: normal_x, y: normal_y, mode: 'markers', name: 'Normal', marker: { color: BLUE, size: 9, opacity: 0.85 }, hovertemplate: 'Normal<br>PC1: %{x}<br>PC2: %{y}<extra></extra>' },
+      { x: tumor_x, y: tumor_y, mode: 'markers', name: 'Tumor', marker: { color: ORANGE, size: 9, opacity: 0.85 }, hovertemplate: 'Tumor<br>PC1: %{x}<br>PC2: %{y}<extra></extra>' }
+    ], { ...plotlyBase, xaxis: { ...plotlyBase.xaxis, title: { text: 'PC1 · 50% variance', font: { size: 9, color: MUTED } } }, yaxis: { ...plotlyBase.yaxis, title: { text: 'PC2 · 14%', font: { size: 9, color: MUTED } } }, legend: { font: { size: 10 }, bgcolor: 'rgba(0,0,0,0)', x: 0.02, y: 0.98 }, margin: {t:10,r:10,b:40,l:50} }, cfg);
+
+    // TOP DEGs bar
+    const genes = ['CSN1S1','PADI3','MMP13','COL11A1','PRAME','KRT16','COL1A1','CA4','ITLN1','SLC6A4'];
+    const lfc = [22.79, 22.16, 9.17, 7.84, 7.21, 6.93, 6.40, -5.69, -6.83, -7.40];
+    const colors = lfc.map(v => v > 0 ? UP : DOWN);
+    Plotly.newPlot('top-degs-bar', [{
+      type: 'bar', x: lfc, y: genes, orientation: 'h',
+      marker: { color: colors },
+      hovertemplate: '<b>%{y}</b><br>log2FC: %{x:.2f}<extra></extra>'
+    }], { ...plotlyBase, xaxis: { ...plotlyBase.xaxis, title: { text: 'log2 Fold Change', font: { size: 9, color: MUTED } }, zeroline: true, zerolinecolor: BORDER, zerolinewidth: 1.5 }, yaxis: { ...plotlyBase.yaxis, autorange: 'reversed' }, margin: {t:10,r:20,b:40,l:80} }, cfg);
+  }
+
+  if (panel === 'degs') {
+    // VOLCANO
+    const rand_x = Array.from({length: 500}, () => (Math.random()-0.5)*12);
+    const rand_y = Array.from({length: 500}, () => Math.random()*30);
+    const rand_sig = rand_x.map((x,i) => Math.abs(x)>1 && rand_y[i]>3);
+    const top_genes = [{x:22.79,y:100,n:'CSN1S1'},{x:22.16,y:95,n:'PADI3'},{x:9.17,y:88,n:'MMP13'},{x:7.84,y:82,n:'COL11A1'},{x:-7.40,y:77,n:'SLC6A4'},{x:-6.83,y:71,n:'ITLN1'},{x:-5.69,y:65,n:'CA4'}];
+    Plotly.newPlot('volcano', [
+      { x: rand_x.filter((_,i)=>!rand_sig[i]), y: rand_y.filter((_,i)=>!rand_sig[i]), mode:'markers', marker:{color:'#333a44',size:3,opacity:0.6}, name:'Not significant', hoverinfo:'skip' },
+      { x: rand_x.filter((_,i)=>rand_sig[i]), y: rand_y.filter((_,i)=>rand_sig[i]), mode:'markers', marker:{color:DOWN,size:4,opacity:0.7}, name:'Significant DEG', hoverinfo:'skip' },
+      { x: top_genes.map(g=>g.x), y: top_genes.map(g=>g.y), mode:'markers+text', marker:{color:YELLOW,size:8}, text:top_genes.map(g=>g.n), textposition:'top center', textfont:{size:8,color:YELLOW}, name:'Top DEGs', hovertemplate:'<b>%{text}</b><br>log2FC: %{x:.2f}<br>-log10(padj): %{y:.1f}<extra></extra>' }
+    ], {
+      ...plotlyBase,
+      shapes:[
+        {type:'line',x0:-1,x1:-1,y0:0,y1:105,line:{color:BORDER,dash:'dot',width:1}},
+        {type:'line',x0:1,x1:1,y0:0,y1:105,line:{color:BORDER,dash:'dot',width:1}},
+        {type:'line',x0:-26,x1:26,y0:3,y1:3,line:{color:BORDER,dash:'dot',width:1}}
+      ],
+      xaxis:{...plotlyBase.xaxis, title:{text:'log2 Fold Change',font:{size:9,color:MUTED}}},
+      yaxis:{...plotlyBase.yaxis, title:{text:'-log10(padj)',font:{size:9,color:MUTED}}},
+      legend:{font:{size:9},bgcolor:'rgba(0,0,0,0)'},
+      margin:{t:10,r:10,b:40,l:55}
+    }, cfg);
+
+    // MA PLOT
+    const ma_mean = Array.from({length: 600}, () => Math.pow(10, Math.random()*5));
+    const ma_lfc = ma_mean.map(() => (Math.random()-0.5)*6 * (1/Math.sqrt(1)));
+    const ma_sig = ma_mean.map((_,i) => Math.abs(ma_lfc[i])>1.5 && Math.random()>0.5);
+    Plotly.newPlot('ma-plot', [
+      { x: ma_mean.filter((_,i)=>!ma_sig[i]), y: ma_lfc.filter((_,i)=>!ma_sig[i]), mode:'markers', marker:{color:'#333a44',size:2.5,opacity:0.5}, name:'Not significant', hoverinfo:'skip' },
+      { x: ma_mean.filter((_,i)=>ma_sig[i]), y: ma_lfc.filter((_,i)=>ma_sig[i]), mode:'markers', marker:{color:BLUE,size:3.5,opacity:0.7}, name:'Significant DEG', hoverinfo:'skip' },
+      { x:[1e-1,1e5], y:[0,0], mode:'lines', line:{color:BORDER,width:1.5}, showlegend:false, hoverinfo:'skip' }
+    ], {
+      ...plotlyBase,
+      xaxis:{...plotlyBase.xaxis, type:'log', title:{text:'Mean normalized counts (log scale)',font:{size:9,color:MUTED}}},
+      yaxis:{...plotlyBase.yaxis, title:{text:'log2 Fold Change',font:{size:9,color:MUTED}}},
+      legend:{font:{size:9},bgcolor:'rgba(0,0,0,0)'},
+      margin:{t:10,r:10,b:45,l:55}
+    }, cfg);
+  }
+
+  if (panel === 'go') {
+    const go_terms = ['Morphogenesis of an epithelium','Epithelial cell proliferation','Chemotaxis','Leukocyte mediated immunity','Regulation of membrane potential','Gland development','Ossification','Extracellular structure organization','Extracellular matrix organization','External encapsulating structure org.','Lymphocyte mediated immunity','Immunoglobulin recombination','Immunoglobulin production','Kidney development','Vascular process in circulatory system','Immunoglobulin mediated immune response','B cell mediated immunity','Cell-cell junction organization','Cell cycle','Cartilage development'];
+    const go_ratio = [0.045,0.043,0.041,0.040,0.038,0.037,0.036,0.035,0.034,0.033,0.032,0.031,0.030,0.029,0.028,0.027,0.026,0.025,0.024,0.023];
+    const go_count = [169,155,143,162,128,134,121,118,125,112,108,99,103,95,88,92,85,78,72,68];
+    const go_padj = [2e-8,4e-8,6e-8,8e-8,1e-7,2e-7,4e-7,6e-7,8e-7,1e-6,2e-6,4e-6,6e-6,8e-6,1e-5,2e-5,4e-5,6e-5,8e-5,1e-4];
+    Plotly.newPlot('go-bp-chart', [{
+      type: 'scatter', mode: 'markers',
+      x: go_ratio, y: go_terms.map(t => t.length > 35 ? t.substring(0,33)+'...' : t),
+      marker: { size: go_count.map(c => Math.sqrt(c)*1.2), color: go_padj.map(p => -Math.log10(p)), colorscale: [[0,'#e3b341'],[0.5,'#f78166'],[1,'#58a6ff']], showscale: true, colorbar: { title: {text:'-log10(padj)',font:{size:9}}, thickness:10, len:0.7, tickfont:{size:8} } },
+      hovertemplate: '<b>%{y}</b><br>GeneRatio: %{x:.3f}<br>Count: %{marker.size:.0f}<extra></extra>'
+    }], {
+      ...plotlyBase,
+      xaxis:{...plotlyBase.xaxis, title:{text:'GeneRatio',font:{size:9,color:MUTED}}},
+      yaxis:{...plotlyBase.yaxis, autorange:'reversed', tickfont:{size:8.5}},
+      margin:{t:10,r:80,b:40,l:240}
+    }, cfg);
+
+    // DONUT
+    Plotly.newPlot('go-donut', [{
+      type:'pie', values:[1123,145,116], labels:['GO-BP','GO-MF','GO-CC'],
+      marker:{colors:[BLUE,YELLOW,UP]}, hole:0.6,
+      textinfo:'percent', textfont:{size:10},
+      hovertemplate:'<b>%{label}</b><br>%{value} terms<extra></extra>'
+    }], {...plotlyBase, showlegend:true, legend:{font:{size:10},bgcolor:'rgba(0,0,0,0)',orientation:'h',y:-0.05}, margin:{t:10,r:10,b:10,l:10}}, cfg);
+  }
+
+  if (panel === 'kegg') {
+    const kegg_paths = ['Neuroactive ligand-receptor interaction','PI3K-Akt signaling pathway','Cytoskeleton in muscle cells','IgSF CAM signaling','Cornified envelope formation','Calcium signaling pathway','Cell adhesion molecule interaction','Focal adhesion','Transcriptional misregulation in cancer','Cell cycle','Protein digestion and absorption','ECM-receptor interaction','Staphylococcus aureus infection','Complement and coagulation cascades','Rheumatoid arthritis','Graft-versus-host disease','Malaria','Type I diabetes mellitus','ABC transporters','Neuroactive ligand signaling'];
+    const kegg_ratio = [0.052,0.048,0.042,0.038,0.035,0.032,0.030,0.028,0.026,0.025,0.024,0.022,0.020,0.018,0.016,0.014,0.013,0.012,0.010,0.009];
+    const kegg_count = [124,118,102,95,88,82,76,70,65,62,58,54,48,44,38,34,30,27,22,18];
+    const kegg_padj = [0.001,0.001,0.002,0.002,0.003,0.003,0.004,0.004,0.005,0.005,0.006,0.006,0.003,0.004,0.004,0.005,0.005,0.005,0.006,0.006];
+    Plotly.newPlot('kegg-chart', [{
+      type:'scatter', mode:'markers',
+      x: kegg_ratio,
+      y: kegg_paths.slice().reverse(),
+      marker:{
+        size: kegg_count.map(c=>Math.sqrt(c)*1.5).reverse(),
+        color: kegg_padj.map(p=>p).reverse(),
+        colorscale:[[0,'#58a6ff'],[0.5,'#e3b341'],[1,'#f85149']],
+        showscale:true,
+        colorbar:{title:{text:'padj',font:{size:9}},thickness:10,len:0.7,tickfont:{size:8}}
+      },
+      hovertemplate:'<b>%{y}</b><br>GeneRatio: %{x:.3f}<extra></extra>'
+    }], {
+      ...plotlyBase,
+      xaxis:{...plotlyBase.xaxis, title:{text:'GeneRatio',font:{size:9,color:MUTED}}},
+      yaxis:{...plotlyBase.yaxis, tickfont:{size:8.5}},
+      margin:{t:10,r:80,b:40,l:280}
+    }, cfg);
+  }
+
+  if (panel === 'gsea') {
+    // GSEA GO
+    const gsea_go_activated = ['Keratinization','Collagen fibril organization','Collagen catabolic process','Cell cycle','DNA damage response','Intermediate filament assembly','Positive regulation EMT','Myeloid leukocyte migration'];
+    const gsea_go_act_nes = [2.13,2.00,2.00,1.95,1.88,1.82,1.75,1.68];
+    const gsea_go_suppressed = ['Response to lipoprotein particles','MHC complex assembly','Leukocyte chemotaxis','B cell activation','T cell activation','NK cell cytotoxicity','Antigen receptor signaling','Adaptive immune response'];
+    const gsea_go_sup_nes = [-2.38,-2.35,-2.20,-2.10,-2.05,-1.98,-1.90,-1.80];
+
+    Plotly.newPlot('gsea-go-chart', [
+      { type:'bar', orientation:'h', x: gsea_go_act_nes, y: gsea_go_activated, marker:{color:UP}, name:'Activated', hovertemplate:'<b>%{y}</b><br>NES: %{x:.2f}<extra></extra>' },
+      { type:'bar', orientation:'h', x: gsea_go_sup_nes, y: gsea_go_suppressed, marker:{color:DOWN}, name:'Suppressed', hovertemplate:'<b>%{y}</b><br>NES: %{x:.2f}<extra></extra>' }
+    ], {
+      ...plotlyBase,
+      barmode:'overlay',
+      xaxis:{...plotlyBase.xaxis, title:{text:'NES',font:{size:9,color:MUTED}}, zeroline:true, zerolinecolor:BORDER},
+      yaxis:{...plotlyBase.yaxis, tickfont:{size:8.5}},
+      legend:{font:{size:10},bgcolor:'rgba(0,0,0,0)',orientation:'h',y:1.05},
+      margin:{t:20,r:10,b:40,l:195}
+    }, cfg);
+
+    // GSEA KEGG
+    const gsea_kegg_act = ['Cornified envelope formation','p53 signaling pathway','Cell cycle','Th17 cell differentiation','Complement and coagulation'];
+    const gsea_kegg_act_nes = [2.17,1.71,1.60,1.55,1.48];
+    const gsea_kegg_sup = ['Graft-versus-host disease','Antigen processing/presentation','Allograft rejection','Th1/Th2 cell differentiation','Hematopoietic cell lineage','NK cell mediated cytotoxicity','Viral myocarditis','Leishmaniasis'];
+    const gsea_kegg_sup_nes = [-2.65,-2.38,-2.16,-2.10,-2.05,-1.95,-1.88,-1.78];
+
+    Plotly.newPlot('gsea-kegg-chart', [
+      { type:'bar', orientation:'h', x: gsea_kegg_act_nes, y: gsea_kegg_act, marker:{color:UP}, name:'Activated', hovertemplate:'<b>%{y}</b><br>NES: %{x:.2f}<extra></extra>' },
+      { type:'bar', orientation:'h', x: gsea_kegg_sup_nes, y: gsea_kegg_sup, marker:{color:DOWN}, name:'Suppressed', hovertemplate:'<b>%{y}</b><br>NES: %{x:.2f}<extra></extra>' }
+    ], {
+      ...plotlyBase,
+      barmode:'overlay',
+      xaxis:{...plotlyBase.xaxis, title:{text:'NES',font:{size:9,color:MUTED}}, zeroline:true, zerolinecolor:BORDER},
+      yaxis:{...plotlyBase.yaxis, tickfont:{size:8.5}},
+      legend:{font:{size:10},bgcolor:'rgba(0,0,0,0)',orientation:'h',y:1.05},
+      margin:{t:20,r:10,b:40,l:220}
+    }, cfg);
+  }
+}
+
+// Render first panel on load
+window.addEventListener('load', () => {
+  window.chartsRendered = { overview: true };
+  renderCharts('overview');
+});
+</script>
+</body>
+</html>
