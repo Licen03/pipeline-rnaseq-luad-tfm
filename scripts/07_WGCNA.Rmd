@@ -1,0 +1,480 @@
+---
+title: "WGCNA Analysis - LUAD"
+author: "Jose Hidalgo"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+project_dir <- "C:/Users/10935/Documents/Proyecto_Adenocarcinoma_RNAseq"
+knitr::opts_knit$set(root.dir = project_dir)
+```
+
+# 1. Load Libraries
+```{r libraries}
+library(WGCNA)
+library(DESeq2)
+library(tidyverse)
+
+# Enable multi-threading for WGCNA correlation computations
+allowWGCNAThreads()
+```
+
+# 2. Load Data
+```{r load-data}
+# Load DESeq2 object saved in Script 04
+dds <- readRDS("06_differential_expression/deseq2_object.rds")
+
+# Apply variance stabilizing transformation for WGCNA
+# blind = FALSE: uses design information to avoid over-shrinkage
+vsd <- vst(dds, blind = FALSE)
+expr_matrix <- assay(vsd)
+
+# WGCNA expects samples as rows and genes as columns
+datExpr <- t(expr_matrix)
+
+dim(datExpr)
+```
+
+# 3. Sample Quality Control
+```{r sample-qc}
+# Check for genes or samples with excessive missing values
+# allOK = TRUE means no filtering needed
+gsg <- goodSamplesGenes(datExpr, verbose = 3)
+
+gsg$allOK
+```
+
+# 4. Sample Clustering
+```{r sample-clustering, fig.width=12, fig.height=6}
+# Hierarchical clustering to detect outlier samples before network construction
+sampleTree <- hclust(dist(datExpr), method = "average")
+
+plot(sampleTree,
+     main    = "Sample Clustering to Detect Outliers",
+     sub     = "",
+     xlab    = "",
+     cex.lab = 1.2,
+     cex.axis = 1,
+     cex.main = 1.4)
+```
+
+# Outlier removal rationale
+# SRR3475130 and SRR3475138 were identified as outliers in both PCA (separation
+# along PC2) and hierarchical clustering (branch height ~160 vs ~100 for other samples).
+# They were removed before WGCNA because co-expression network construction via Pearson
+# correlation is more sensitive to outliers than DESeq2's negative binomial model.
+# Both samples had been flagged in the differential expression analysis as transcriptomically
+# atypical, consistent with the intratumoral heterogeneity characteristic of LUAD.
+
+# 5. Remove Outliers
+```{r remove-outliers}
+outliers <- c("SRR3475130", "SRR3475138")
+datExpr  <- datExpr[!rownames(datExpr) %in% outliers, ]
+
+# Confirm removal
+dim(datExpr)
+rownames(datExpr)
+```
+
+# 6. Soft Thresholding Power Selection
+```{r soft-threshold, fig.width=12, fig.height=6}
+# Test powers 1-30 to find the one that achieves scale-free topology
+powers <- c(1:30)
+
+sft <- pickSoftThreshold(datExpr,
+                         powerVector = powers,
+                         verbose     = 5,
+                         networkType = "signed")
+
+# Plot scale-free fit and mean connectivity vs power
+par(mfrow = c(1, 2))
+
+# R² vs power — select the lowest power above the 0.80 threshold
+plot(sft$fitIndices[, 1],
+     -sign(sft$fitIndices[, 3]) * sft$fitIndices[, 2],
+     xlab = "Soft Threshold (power)",
+     ylab = "Scale Free Topology Model Fit (R²)",
+     main = "Scale Independence",
+     type = "n")
+text(sft$fitIndices[, 1],
+     -sign(sft$fitIndices[, 3]) * sft$fitIndices[, 2],
+     labels = powers, col = "red")
+abline(h = 0.80, col = "blue")
+
+# Mean connectivity vs power — should decrease monotonically
+plot(sft$fitIndices[, 1],
+     sft$fitIndices[, 5],
+     xlab = "Soft Threshold (power)",
+     ylab = "Mean Connectivity",
+     main = "Mean Connectivity",
+     type = "n")
+text(sft$fitIndices[, 1],
+     sft$fitIndices[, 5],
+     labels = powers, col = "red")
+```
+
+# 6.5 Filter to DEGs Only
+```{r filter-degs}
+# Restrict WGCNA to DEGs only — reduces noise and computation time
+degs <- read.csv("06_differential_expression/DEGs_significant.csv")
+
+# Clean version suffixes from Ensembl IDs
+degs$gene_id_clean  <- sub("\\..*", "", degs$gene_id)
+gene_ids_clean      <- sub("\\..*", "", colnames(datExpr))
+
+# Keep only columns (genes) that are significant DEGs
+deg_indices        <- which(gene_ids_clean %in% degs$gene_id_clean)
+datExpr_filtered   <- datExpr[, deg_indices]
+
+dim(datExpr_filtered)
+cat("Genes in analysis:", ncol(datExpr_filtered), "\n")
+```
+
+# 7. Network Construction and Module Detection
+```{r network, cache=TRUE}
+# Selected power: 13 (first value achieving R² >= 0.80)
+softPower <- 13
+
+# Override R's built-in cor() with WGCNA's version to avoid conflicts
+cor <- WGCNA::cor
+
+net <- blockwiseModules(
+  datExpr_filtered,
+  power            = softPower,
+  networkType      = "signed",    # signed: preserves direction of correlation
+  TOMType          = "signed",
+  minModuleSize    = 30,          # minimum genes per module
+  mergeCutHeight   = 0.25,        # threshold for merging similar modules
+  deepSplit        = 2,
+  numericLabels    = FALSE,       # use color names for modules
+  pamRespectsDendro = FALSE,
+  saveTOMs         = FALSE,
+  verbose          = 3
+)
+
+# Module sizes
+table(net$colors)
+```
+
+# 8. Module-Trait Correlation
+```{r module-trait, fig.width=10, fig.height=8}
+# Encode condition as binary trait: 0 = Normal, 1 = Tumor
+samples   <- rownames(datExpr_filtered)
+condition <- ifelse(grepl("SRR3474", samples), "Normal", "Tumor")
+traitData <- data.frame(
+  Tumor     = as.numeric(condition == "Tumor"),
+  row.names = samples
+)
+
+# Calculate module eigengenes (first PC of each module's expression)
+MEs <- moduleEigengenes(datExpr_filtered, net$colors)$eigengenes
+MEs <- orderMEs(MEs)
+
+# Correlate eigengenes with Tumor trait
+moduleTraitCor    <- cor(MEs, traitData, use = "p")
+moduleTraitPvalue <- corPvalueStudent(moduleTraitCor, nrow(datExpr_filtered))
+
+# Build annotation matrix for heatmap
+textMatrix     <- paste0(signif(moduleTraitCor, 2), "\n(", signif(moduleTraitPvalue, 1), ")")
+dim(textMatrix) <- dim(moduleTraitCor)
+
+par(mar = c(6, 8.5, 3, 3))
+labeledHeatmap(
+  Matrix        = moduleTraitCor,
+  xLabels       = "Tumor",
+  yLabels       = names(MEs),
+  ySymbols      = names(MEs),
+  colorLabels   = FALSE,
+  colors        = blueWhiteRed(50),
+  textMatrix    = textMatrix,
+  setStdMargins = FALSE,
+  cex.text      = 0.8,
+  zlim          = c(-1, 1),
+  main          = "Module-Trait Relationships"
+)
+```
+
+# 9. Extract Tumor-Associated Module Genes
+```{r tumor-modules}
+# Selected modules based on module-trait correlation:
+# blue (activated), turquoise (suppressed), brown (activated)
+tumor_modules <- c("blue", "turquoise", "brown")
+
+module_genes <- data.frame(
+  gene_id = colnames(datExpr_filtered),
+  module  = net$colors
+) %>%
+  filter(module %in% tumor_modules)
+
+table(module_genes$module)
+
+write.csv(module_genes,
+          "07_functional_analysis/WGCNA_tumor_module_genes.csv",
+          row.names = FALSE)
+
+cat("Total genes in tumor modules:", nrow(module_genes), "\n")
+```
+
+# 10. DEG and Module Overlap
+```{r deg-module-overlap}
+# Clean IDs for join
+module_genes$gene_id_clean <- sub("\\..*", "", module_genes$gene_id)
+degs$gene_id_clean         <- sub("\\..*", "", degs$gene_id)
+
+# Inner join: keep only genes that are both DEGs and in tumor modules
+overlap_genes <- inner_join(degs, module_genes, by = "gene_id_clean")
+
+cat("Total DEGs:                   ", nrow(degs), "\n")
+cat("Genes in tumor modules:       ", nrow(module_genes), "\n")
+cat("Overlap (candidates for PPI): ", nrow(overlap_genes), "\n\n")
+
+table(overlap_genes$module)
+
+write.csv(overlap_genes,
+          "07_functional_analysis/WGCNA_DEG_overlap.csv",
+          row.names = FALSE)
+```
+
+# 11. Hub Gene Identification
+```{r hub-genes}
+MEs <- moduleEigengenes(datExpr_filtered, net$colors)$eigengenes
+
+# Gene significance (GS): correlation of each gene with the Tumor trait
+GS_tumor        <- as.numeric(cor(datExpr_filtered, traitData$Tumor, use = "p"))
+names(GS_tumor) <- colnames(datExpr_filtered)
+
+# Module membership (kME): correlation of each gene with its module eigengene
+kME_blue      <- as.numeric(cor(datExpr_filtered, MEs$MEblue,      use = "p"))
+kME_turquoise <- as.numeric(cor(datExpr_filtered, MEs$MEturquoise, use = "p"))
+kME_brown     <- as.numeric(cor(datExpr_filtered, MEs$MEbrown,     use = "p"))
+
+names(kME_blue) <- names(kME_turquoise) <- names(kME_brown) <- colnames(datExpr_filtered)
+
+# Hub gene criteria: kME > 0.8 AND |GS| > 0.8
+hub_blue      <- names(which(kME_blue      > 0.8 & abs(GS_tumor) > 0.8))
+hub_turquoise <- names(which(kME_turquoise > 0.8 & abs(GS_tumor) > 0.8))
+hub_brown     <- names(which(kME_brown     > 0.8 & abs(GS_tumor) > 0.8))
+
+cat("Hub genes — blue:      ", length(hub_blue), "\n")
+cat("Hub genes — turquoise: ", length(hub_turquoise), "\n")
+cat("Hub genes — brown:     ", length(hub_brown), "\n")
+
+all_hubs <- unique(c(hub_blue, hub_turquoise, hub_brown))
+cat("Total unique hub genes:", length(all_hubs), "\n")
+```
+
+# 12. Convert Hub Gene IDs and Save for STRING
+```{r convert-hub-ids}
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+
+# Strip version suffixes
+all_hubs_clean <- sub("\\..*", "", all_hubs)
+
+# Convert Ensembl to gene symbols
+hub_symbols <- mapIds(
+  org.Hs.eg.db,
+  keys      = all_hubs_clean,
+  column    = "SYMBOL",
+  keytype   = "ENSEMBL",
+  multiVals = "first"
+)
+
+hub_df <- data.frame(
+  ensembl_id  = all_hubs_clean,
+  gene_symbol = hub_symbols,
+  module      = ifelse(all_hubs %in% hub_blue, "blue",
+                ifelse(all_hubs %in% hub_turquoise, "turquoise", "brown")),
+  row.names   = NULL
+) %>%
+  filter(!is.na(gene_symbol))
+
+cat("Hub genes with symbol assigned:", nrow(hub_df), "\n")
+head(hub_df, 20)
+
+write.csv(hub_df,
+          "07_functional_analysis/WGCNA_hub_genes.csv",
+          row.names = FALSE)
+```
+
+# 13. STRING Input List
+```{r string-list}
+# One gene per line — STRING accepted format
+string_input <- unique(hub_df$gene_symbol)
+
+cat("Total genes for STRING:", length(string_input), "\n")
+
+writeLines(string_input,
+           "07_functional_analysis/hub_genes_for_STRING.txt")
+
+cat("Saved to: 07_functional_analysis/hub_genes_for_STRING.txt\n\n")
+
+# Breakdown by module
+hub_df %>%
+  group_by(module) %>%
+  summarise(n_genes = n(),
+            genes   = paste(gene_symbol, collapse = ", ")) %>%
+  print()
+```
+
+# 14. PPI Consensus Hub Genes
+```{r consensus-hubs}
+library(readr)
+
+# Load cytoHubba top-20 rankings from four algorithms
+degree <- read_csv("07_functional_analysis/first20_DegreeModel.csv", skip = 1)
+mcc    <- read_csv("07_functional_analysis/first20_MCCModel.csv",    skip = 1)
+mnc    <- read_csv("07_functional_analysis/first20_MNCModel.csv",    skip = 1)
+epc    <- read_csv("07_functional_analysis/first20_EPCModel.csv",    skip = 1)
+
+genes_degree <- degree$Name
+genes_mcc    <- mcc$Name
+genes_mnc    <- mnc$Name
+genes_epc    <- epc$Name
+
+# Count how many algorithms rank each gene in the top 20
+all_genes <- unique(c(genes_degree, genes_mcc, genes_mnc, genes_epc))
+
+consensus_df <- data.frame(
+  gene_symbol = all_genes,
+  in_degree   = as.integer(all_genes %in% genes_degree),
+  in_mcc      = as.integer(all_genes %in% genes_mcc),
+  in_mnc      = as.integer(all_genes %in% genes_mnc),
+  in_epc      = as.integer(all_genes %in% genes_epc)
+) %>%
+  mutate(n_algorithms = in_degree + in_mcc + in_mnc + in_epc) %>%
+  filter(n_algorithms >= 3) %>%   # consensus threshold: top-20 in at least 3 algorithms
+  arrange(desc(n_algorithms), gene_symbol)
+
+cat("Consensus hub genes (>=3 algorithms):", nrow(consensus_df), "\n\n")
+print(consensus_df)
+
+write.csv(consensus_df,
+          "07_functional_analysis/PPI_consensus_hub_genes.csv",
+          row.names = FALSE)
+```
+
+# 15. Module Dendrogram
+```{r dendrogram, fig.width=14, fig.height=6}
+plotDendroAndColors(
+  net$dendrograms[[1]],
+  net$colors[net$blockGenes[[1]]],
+  "Module colors",
+  dendroLabels = FALSE,
+  hang         = 0.03,
+  addGuide     = TRUE,
+  guideHang    = 0.05,
+  main         = "Gene Dendrogram and Module Colors - Block 1"
+)
+```
+
+# 16. Gene Significance vs Module Membership Scatter Plots
+```{r gs-kme-plots, fig.width=12, fig.height=4}
+# High kME + high GS = biologically relevant hub gene
+par(mfrow = c(1, 3))
+
+verboseScatterplot(
+  kME_blue[net$colors == "blue"],
+  GS_tumor[net$colors == "blue"],
+  xlab   = "Module Membership (kME) - Blue",
+  ylab   = "Gene Significance (GS) for Tumor",
+  main   = "Blue Module",
+  col    = "blue", abline = TRUE
+)
+
+verboseScatterplot(
+  kME_turquoise[net$colors == "turquoise"],
+  GS_tumor[net$colors == "turquoise"],
+  xlab   = "Module Membership (kME) - Turquoise",
+  ylab   = "Gene Significance (GS) for Tumor",
+  main   = "Turquoise Module",
+  col    = "turquoise", abline = TRUE
+)
+
+verboseScatterplot(
+  kME_brown[net$colors == "brown"],
+  GS_tumor[net$colors == "brown"],
+  xlab   = "Module Membership (kME) - Brown",
+  ylab   = "Gene Significance (GS) for Tumor",
+  main   = "Brown Module",
+  col    = "brown", abline = TRUE
+)
+```
+
+# 17. Save Full Module Summary
+```{r save-results}
+module_summary <- data.frame(
+  gene_id       = colnames(datExpr_filtered),
+  module        = net$colors,
+  kME_blue      = kME_blue,
+  kME_turquoise = kME_turquoise,
+  kME_brown     = kME_brown,
+  GS_tumor      = GS_tumor
+)
+
+write.csv(module_summary,
+          "07_functional_analysis/WGCNA_module_summary.csv",
+          row.names = FALSE)
+
+cat("=== WGCNA SUMMARY ===\n")
+cat("Samples analyzed:         ", nrow(datExpr_filtered), "\n")
+cat("Genes analyzed:           ", ncol(datExpr_filtered), "\n")
+cat("Soft power selected:      ", softPower, "\n")
+cat("Modules identified:       ", length(unique(net$colors)) - 1, "\n")
+cat("Tumor modules selected:   blue, turquoise, brown\n")
+cat("WGCNA hub genes:          ", length(all_hubs), "\n")
+cat("Hub genes with symbol:    ", nrow(hub_df), "\n")
+cat("Consensus hub genes (PPI):", nrow(consensus_df), "\n")
+```
+
+# 18. Save WGCNA Objects for Reuse
+```{r save-wgcna}
+# Save network object
+saveRDS(net, "07_functional_analysis/WGCNA_net.rds")
+
+# Save all objects needed by Script 08
+save(sft, MEs, moduleTraitCor, textMatrix, GS_tumor,
+     kME_blue, kME_turquoise, kME_brown,
+     datExpr_filtered, traitData,
+     file = "07_functional_analysis/WGCNA_objects.RData")
+
+cat("WGCNA objects saved\n")
+```
+
+# 19. Hub Gene Bar Chart
+```{r hub-barchart, fig.width=8, fig.height=6}
+library(tidyverse)
+
+degree <- read_csv("07_functional_analysis/first20_DegreeModel.csv", skip = 1)
+
+# Consensus hub gene list (from Section 14)
+hub_genes <- c("AIF1","CCR1","CD163","CD33","CD36","CD86","CTSS","CYBB",
+               "TLR7","FCER1G","FCGR1A","FCGR3A","MYD88","TLR4","MNDA",
+               "LILRB2","TLR8","C5AR1","FPR1")
+
+# Use Degree scores as the ranking reference
+degree_scores <- degree %>%
+  filter(Name %in% hub_genes) %>%
+  rename(gene = Name, score = Score) %>%
+  arrange(desc(score))
+
+p <- ggplot(degree_scores, aes(x = reorder(gene, score), y = score)) +
+  geom_bar(stat = "identity", fill = "#4A90D9") +
+  coord_flip() +
+  labs(title = "Consensus Hub Genes — Degree Score",
+       x     = NULL,
+       y     = "Degree Score") +
+  theme_classic(base_size = 12)
+
+ggsave("08_figures_tables/article_figures/Fig4B_HubGenes_Degree.png",
+       p, width = 8, height = 6, dpi = 300)
+
+p
+```

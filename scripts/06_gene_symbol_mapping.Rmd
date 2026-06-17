@@ -1,0 +1,186 @@
+---
+title: "Gene Symbol Mapping and Supplementary Table Preparation"
+author: "Jose Hidalgo"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## 1. Path Configuration
+
+```{r paths}
+input_file <- "C:/Users/10935/Documents/Proyecto_Adenocarcinoma_RNAseq/06_differential_expression/DEGs_significant.csv"
+output_dir <- "C:/Users/10935/Documents/Proyecto_Adenocarcinoma_RNAseq/08_figures_tables"
+```
+
+## 2. Load Libraries
+
+```{r libraries}
+library(tidyverse)
+library(org.Hs.eg.db)
+library(knitr)
+library(kableExtra)
+```
+
+## 3. Load Data
+
+```{r load-data}
+degs <- read.csv(input_file)
+
+cat("Total DEGs loaded:", nrow(degs))
+```
+
+## 4. Map Ensembl IDs to Gene Symbols
+
+```{r map-symbols}
+# Strip version suffix from Ensembl IDs (e.g. ENSG00000001.12 -> ENSG00000001)
+degs$ensembl_clean <- gsub("\\..*", "", degs$gene_id)
+
+# Map to gene symbols using org.Hs.eg.db
+symbols <- mapIds(org.Hs.eg.db,
+                  keys     = degs$ensembl_clean,
+                  column   = "SYMBOL",
+                  keytype  = "ENSEMBL",
+                  multiVals = "first")
+
+# Add symbols to data frame
+degs$symbol <- symbols[degs$ensembl_clean]
+
+# Mapping summary
+mapped <- sum(!is.na(degs$symbol))
+cat("Successfully mapped:", mapped, "of", nrow(degs),
+    "(", round(mapped / nrow(degs) * 100, 1), "%)")
+```
+
+## 5. Top Genes for Results Section
+
+### Top 10 upregulated in tumor
+
+```{r top-upregulated}
+top_up <- degs %>%
+  filter(!is.na(symbol)) %>%
+  arrange(desc(log2FoldChange)) %>%
+  head(10) %>%
+  dplyr::select(symbol, gene_id, log2FoldChange, padj, baseMean) %>%
+  mutate(
+    log2FoldChange = round(log2FoldChange, 3),
+    padj           = formatC(padj, format = "e", digits = 2),
+    baseMean       = round(baseMean, 2)
+  )
+
+top_up %>%
+  kable(caption = "Top 10 genes upregulated in tumor") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+### Top 10 downregulated in tumor
+
+```{r top-downregulated}
+top_down <- degs %>%
+  filter(!is.na(symbol)) %>%
+  arrange(log2FoldChange) %>%
+  head(10) %>%
+  dplyr::select(symbol, gene_id, log2FoldChange, padj, baseMean) %>%
+  mutate(
+    log2FoldChange = round(log2FoldChange, 3),
+    padj           = formatC(padj, format = "e", digits = 2),
+    baseMean       = round(baseMean, 2)
+  )
+
+top_down %>%
+  kable(caption = "Top 10 genes downregulated in tumor") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+## 6. Prepare Supplementary Tables
+
+```{r supplementary-tables}
+# Top 200 DEGs by absolute log2FC magnitude
+supp_top200 <- degs %>%
+  filter(!is.na(symbol)) %>%
+  arrange(desc(abs(log2FoldChange))) %>%
+  head(200) %>%
+  dplyr::select(symbol, gene_id, log2FoldChange, padj, baseMean) %>%
+  mutate(
+    log2FoldChange = round(log2FoldChange, 3),
+    padj           = formatC(padj, format = "e", digits = 2),
+    baseMean       = round(baseMean, 2),
+    regulation     = ifelse(log2FoldChange > 0, "Up", "Down")
+  ) %>%
+  arrange(desc(log2FoldChange))
+
+# Full DEG table with symbols
+supp_complete <- degs %>%
+  dplyr::select(symbol, gene_id, log2FoldChange, padj, baseMean) %>%
+  mutate(
+    log2FoldChange = round(log2FoldChange, 3),
+    padj           = formatC(padj, format = "e", digits = 2),
+    baseMean       = round(baseMean, 2),
+    regulation     = ifelse(log2FoldChange > 0, "Up", "Down")
+  ) %>%
+  arrange(desc(log2FoldChange))
+```
+
+## 7. Export Tables
+
+```{r export}
+# Top 200 supplementary table
+write.csv(supp_top200,
+          file.path(output_dir, "Anexo_Top200_DEGs.csv"),
+          row.names = FALSE)
+
+# Full table with symbols
+write.csv(supp_complete,
+          file.path(output_dir, "DEGs_con_simbolos_completo.csv"),
+          row.names = FALSE)
+
+cat("Files exported to:", output_dir, "\n")
+cat("  - Anexo_Top200_DEGs.csv\n")
+cat("  - DEGs_con_simbolos_completo.csv\n")
+```
+
+## 8. Results Section Text
+
+```{r results-text, results='asis'}
+top3_up_symbols <- top_up$symbol[1:3]
+top3_up_fc      <- top_up$log2FoldChange[1:3]
+top2_down_symbols <- top_down$symbol[1:2]
+top2_down_fc      <- top_down$log2FoldChange[1:2]
+
+cat("---\n\n")
+cat("**Copy to Results section:**\n\n")
+cat("> Among the genes with the highest upregulation in tumor tissue were **",
+    top3_up_symbols[1], "** (log2FC = ", top3_up_fc[1], "), **",
+    top3_up_symbols[2], "** (log2FC = ", top3_up_fc[2], "), and **",
+    top3_up_symbols[3], "** (log2FC = ", top3_up_fc[3], "). ",
+    "The most strongly downregulated genes included **",
+    top2_down_symbols[1], "** (log2FC = ", top2_down_fc[1], ") and **",
+    top2_down_symbols[2], "** (log2FC = ", top2_down_fc[2], "). ",
+    "The complete DEG list with gene symbols is provided in Supplementary Table X.",
+    sep = "")
+```
+
+## 9. Preview — Supplementary Table
+
+```{r preview-supp}
+head(supp_top200, 20) %>%
+  kable(caption = "Preview: first 20 genes of supplementary table") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed")) %>%
+  scroll_box(height = "400px")
+```
+
+---
+
+## Session Info
+
+```{r session-info}
+sessionInfo()
+```

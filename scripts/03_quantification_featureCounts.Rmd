@@ -1,0 +1,131 @@
+---
+title: "Gene Expression Quantification with featureCounts"
+author: "Jose Hidalgo"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = TRUE)
+project_dir <- "C:/Users/10935/Documents/Proyecto_Adenocarcinoma_RNAseq"
+knitr::opts_knit$set(root.dir = project_dir)
+```
+
+# 1. Load Libraries
+```{r load-libraries, message=FALSE, warning=FALSE}
+library(Rsubread)
+library(tidyverse)
+
+cat("Rsubread version:", as.character(packageVersion("Rsubread")), "\n")
+```
+
+# 2. Verify BAM Files
+```{r verify-bams}
+bam_dir   <- "04_alignment/bam_files"
+bam_files <- list.files(bam_dir, pattern = "_fixed\\.bam$", full.names = TRUE)
+
+cat("BAM files found:", length(bam_files), "\n")
+
+if (length(bam_files) == 20) {
+  cat("All 20 samples present\n")
+} else {
+  cat("Expected 20 BAM files — check alignment output\n")
+}
+```
+
+# 3. Verify GTF Annotation File
+```{r verify-gtf}
+gtf_file <- "03_genome_reference/annotation/gencode.v47.primary_assembly.annotation.gtf"
+
+if (file.exists(gtf_file)) {
+  cat("GTF found\n")
+  cat("  Size:", round(file.info(gtf_file)$size / (1024^3), 2), "GB\n")
+} else {
+  stop("GTF not found — run Script 00 to decompress reference files")
+}
+```
+
+# 4. Quantification with featureCounts
+
+**Estimated time: 30-60 min**
+
+**To run:** change `eval=FALSE` to `eval=TRUE`.
+```{r quantification, eval=FALSE}
+cat("Starting quantification...\n")
+cat("Start:", format(Sys.time(), "%H:%M:%S"), "\n\n")
+
+fc <- featureCounts(
+  files               = bam_files,
+  annot.ext           = gtf_file,
+  isGTFAnnotationFile = TRUE,
+  GTF.featureType     = "exon",     # count reads overlapping exons
+  GTF.attrType        = "gene_id",  # aggregate counts at gene level
+  isPairedEnd         = TRUE,       # paired-end library
+  nthreads            = 4
+)
+
+cat("\nQuantification complete\n")
+cat("End:", format(Sys.time(), "%H:%M:%S"), "\n")
+
+# Save featureCounts output object
+save(fc, file = "05_quantification/counts/featureCounts_results.RData")
+cat("Results saved\n")
+```
+
+# 5. Explore Results
+```{r explore-results}
+load("05_quantification/counts/featureCounts_results.RData")
+
+counts <- fc$counts
+
+cat("Genes:   ", nrow(counts), "\n")
+cat("Samples: ", ncol(counts), "\n\n")
+
+cat("Assignment statistics:\n")
+print(fc$stat)
+```
+
+# 6. Clean and Save Count Matrix
+```{r save-counts}
+# Strip full path from column names, keep sample ID only
+colnames(counts) <- gsub(".*/", "", colnames(counts))
+colnames(counts) <- gsub("_fixed\\.bam$", "", colnames(counts))
+
+cat("Sample names:\n")
+print(colnames(counts))
+
+# Convert to data frame and save
+counts_df         <- as.data.frame(counts)
+counts_df$gene_id <- rownames(counts_df)
+counts_df         <- counts_df[, c("gene_id", colnames(counts))]
+
+write.csv(counts_df,
+          "05_quantification/counts/raw_counts_matrix.csv",
+          row.names = FALSE)
+
+cat("\nCount matrix saved: raw_counts_matrix.csv\n")
+```
+
+# 7. Summary
+```{r summary}
+counts_file <- "05_quantification/counts/raw_counts_matrix.csv"
+
+if (file.exists(counts_file)) {
+  cat("===================================\n")
+  cat("Quantification complete\n")
+  cat("  Genes:  ", nrow(counts_df), "\n")
+  cat("  Samples:", ncol(counts_df) - 1, "\n")
+  cat("\nNext: Script 04_differential_expression_DESeq2\n")
+} else {
+  cat("Run Section 4 first\n")
+}
+```
+
+```{r session-info}
+sessionInfo()
+```

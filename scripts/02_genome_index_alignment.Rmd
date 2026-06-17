@@ -1,0 +1,134 @@
+---
+title: "Genome Index and Alignment - Rsubread"
+author: "Jose Hidalgo"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = TRUE)
+project_dir <- "C:/Users/10935/Documents/Proyecto_Adenocarcinoma_RNAseq"
+knitr::opts_knit$set(root.dir = project_dir)
+```
+
+# 1. Load Libraries
+```{r load-libraries, message=FALSE, warning=FALSE}
+library(Rsubread)
+library(tidyverse)
+
+cat("Rsubread version:", as.character(packageVersion("Rsubread")), "\n")
+```
+
+# 2. Verify Reference Files
+```{r verify-files}
+genome_file <- "03_genome_reference/genome_fasta/GRCh38.primary_assembly.genome.fa"
+gtf_file    <- "03_genome_reference/annotation/gencode.v47.primary_assembly.annotation.gtf"
+
+cat("Genome:", ifelse(file.exists(genome_file), "OK", "MISSING"), "\n")
+cat("GTF:   ", ifelse(file.exists(gtf_file),    "OK", "MISSING"), "\n")
+```
+
+# 3. Build Genome Index
+
+**Estimated time: 30-60 min | RAM: 8-16 GB | Disk: ~5 GB**
+
+**To run:** change `eval=FALSE` to `eval=TRUE`.
+```{r build-index, eval=FALSE}
+cat("Building genome index...\n")
+cat("Start:", format(Sys.time(), "%H:%M:%S"), "\n\n")
+
+buildindex(
+  basename  = "03_genome_reference/hisat2_index/GRCh38_subread",
+  reference = "03_genome_reference/genome_fasta/GRCh38.primary_assembly.genome.fa",
+  indexSplit = FALSE,
+  memory     = 8000   # MB allocated for index building
+)
+
+cat("\nIndex built successfully\n")
+cat("End:", format(Sys.time(), "%H:%M:%S"), "\n")
+```
+
+# 4. Verify Index
+```{r verify-index}
+index_files <- list.files("03_genome_reference/hisat2_index",
+                          pattern = "GRCh38_subread")
+
+if (length(index_files) > 0) {
+  cat("Index found:", length(index_files), "files\n")
+
+  total_size <- sum(file.info(
+    list.files("03_genome_reference/hisat2_index",
+               pattern = "GRCh38_subread",
+               full.names = TRUE))$size) / (1024^3)
+  cat("  Total size:", round(total_size, 2), "GB\n")
+} else {
+  cat("Index NOT found. Run Section 3 first.\n")
+}
+```
+
+# 5. Load Metadata
+```{r load-metadata}
+metadata <- read.csv("00_raw_data/metadata/metadata_consolidado.csv",
+                     stringsAsFactors = FALSE)
+
+cat("Samples:", nrow(metadata),
+    "(", sum(metadata$condition == "Tumor"), "Tumor +",
+    sum(metadata$condition == "Normal"), "Normal)\n")
+```
+
+# 6. Read Alignment
+
+**Estimated time: 4-8 hours | RAM: 8-12 GB | Disk: ~80 GB**
+
+**To run:** change `eval=FALSE` to `eval=TRUE`.
+```{r alignment, eval=FALSE}
+cat("Starting alignment...\n")
+cat("Start:", format(Sys.time(), "%H:%M:%S"), "\n\n")
+
+index_base <- "03_genome_reference/hisat2_index/GRCh38_subread"
+output_dir <- "04_alignment/bam_files"
+
+for (i in 1:nrow(metadata)) {
+  sample_id <- metadata$sample_id[i]
+  cat(sprintf("[%d/%d] %s\n", i, nrow(metadata), sample_id))
+
+  align(
+    index        = index_base,
+    readfile1    = metadata$fastq_1[i],
+    readfile2    = metadata$fastq_2[i],   # paired-end: both reads required
+    output_file  = file.path(output_dir, paste0(sample_id, ".bam")),
+    type         = "rna",                 # RNA-seq mode
+    nthreads     = 4,
+    unique       = FALSE,
+    nBestLocations = 1,
+    maxMismatches  = 3,
+    phredOffset    = 33                   # Illumina 1.8+ quality encoding
+  )
+}
+
+cat("\nAlignment complete\n")
+cat("End:", format(Sys.time(), "%H:%M:%S"), "\n")
+```
+
+# 7. Summary
+```{r summary}
+index_ok <- length(list.files("03_genome_reference/hisat2_index",
+                              pattern = "GRCh38_subread")) > 0
+n_bams   <- length(list.files("04_alignment/bam_files", pattern = "\\.bam$"))
+
+cat("Index:          ", ifelse(index_ok, "OK", "Pending"), "\n")
+cat("BAMs aligned:   ", n_bams, "/", nrow(metadata), "\n")
+
+if (index_ok && n_bams == nrow(metadata)) {
+  cat("\nReady — Next: Script 03_quantification_featureCounts\n")
+}
+```
+
+```{r session-info}
+sessionInfo()
+```
